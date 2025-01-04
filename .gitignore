@@ -9,3 +9,4 @@ __pycache__/
 wandb/
 lightning_logs/
 .DS_Store
+deepspeed_configs/

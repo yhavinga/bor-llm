@@ -64,6 +64,14 @@ case $ENV_TYPE in
         pip install -r requirements_torch_cuda.txt
         # Install flash-attention separately with no build isolation
         pip install flash-attn --no-build-isolation
+        # Install Axolotl with flash-attention
+        pip install --no-build-isolation "axolotl[flash-attn,deepspeed]"
+        
+        # Fetch DeepSpeed configs if directory doesn't exist
+        if [ ! -d "deepspeed_configs" ]; then
+            echo "Fetching Axolotl DeepSpeed configs..."
+            axolotl fetch deepspeed_configs
+        fi
         ;;
     "torch-rocm")
         # Install required dependencies first

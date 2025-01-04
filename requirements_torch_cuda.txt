@@ -8,7 +8,8 @@ torch
 
 # Install the rest from PyPI
 transformers
+sentencepiece
 datasets
-accelerate
+accelerate==1.0.1  # to prevent AttributeError: 'AdamW' object has no attribute 'optim_bits' with paged_adamw-8bit
 bitsandbytes
 -r requirements_common.txt 

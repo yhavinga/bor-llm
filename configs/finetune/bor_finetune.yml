@@ -1,0 +1,69 @@
+base_model: yhavinga/bor-420k-32k-110k-158k-108k-250k
+model_type: MistralForCausalLM
+tokenizer_type: AutoTokenizer
+
+datasets:
+  - path: yhavinga/openhermes-dutch-sft
+    type: chat_template
+    chat_template: tokenizer_default
+    field_messages: messages
+    message_field_role: role
+    message_field_content: content
+    roles:
+      user: ["human", "user"]
+      assistant: ["gpt", "assistant"]
+      system: ["system"]
+      tool: ["tool"]
+
+  # - path: yhavinga/Openhermes-2.5-dutch-46k
+  #   type: chat_template
+  #   chat_template: tokenizer_default
+  #   field_messages: conversations_nl
+  #   message_field_role: from
+  #   message_field_content: value
+  #   roles:
+  #     user: ["human", "user"]
+  #     assistant: ["gpt", "assistant"]
+  #     system: ["system"]
+  #     tool: ["tool"]
+
+dataset_prepared_path: last_run_prepared
+
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+# Training parameters
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+num_epochs: 3
+learning_rate: 2e-5
+lr_scheduler: cosine
+warmup_steps: 100
+
+# Optimizer settings
+optimizer: paged_adamw_8bit
+weight_decay: 0.1
+max_grad_norm: 1.0
+
+gpu_memory_limit: 20GiB
+
+# Mixed precision
+bf16: true
+tf32: true
+
+# Evaluation and logging
+eval_steps: 50
+save_steps: 500
+logging_steps: 5
+val_set_size: 0.05
+
+# Output
+output_dir: outputs/bor-openhermes-dutch
+
+# DeepSpeed integration
+deepspeed: deepspeed_configs/zero2.json
+
+# Optional monitoring
+wandb_project: bor-finetune
+wandb_entity: yepster
