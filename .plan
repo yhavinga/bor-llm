@@ -10,7 +10,7 @@
 1. Project Structure
    - [x] Initialize repo structure
    - [x] Set up multi-platform environments (CUDA/ROCm/JAX)
-   - [ ] Document environment setup process
+   - [x] Document environment setup process
 
 2. Model Documentation
    - [ ] Create comprehensive model card
@@ -19,9 +19,8 @@
    - [ ] Performance benchmarks
 
 3. Training Pipeline
-   - [ ] Port existing pretraining scripts
-   - [ ] Create unified training interface
-   - [ ] Add multi-platform support (CUDA/ROCm/JAX)
+   - [x] Choose / install pretraining library (handbook, Axolotl etc)
+   - [x] Add multi-platform support (CUDA/ROCm/JAX)
    - [ ] Implement distributed training
    
 4. Finetuning
@@ -29,7 +28,7 @@
    - [ ] Implement PEFT methods (LoRA/QLoRA)
    - [ ] Add instruction tuning capabilities
    - [ ] Develop evaluation suite
-   + [ ] Initial OpenHermes finetuning experiment
+   + [x] Initial OpenHermes finetuning experiment
      - Base: bor model
      - Target: OpenHermes 2.5 Dutch
      - Method: Full finetuning with bfloat16
@@ -48,10 +47,10 @@
    - [ ] Monitoring setup
 
 ## Technical Requirements
-- Multi-platform support (CUDA/ROCm/JAX/TPU)
-- Reproducible training pipeline
-- Comprehensive testing suite
-- Production deployment readiness
+- [x] Multi-platform support (CUDA/ROCm/JAX/TPU)
+- [x] Reproducible training pipeline
+- [ ] Comprehensive testing suite
+- [ ] Production deployment readiness
 
 ## Quality Targets
 - Perplexity: TBD
