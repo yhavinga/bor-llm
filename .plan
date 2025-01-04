@@ -1,0 +1,60 @@
+# BOR LLM Project Plan
+
+## Model Specs
+- Architecture: Mistral 1.1B
+- Languages: Dutch + English
+- Current checkpoint: Pretrained on 100B tokens (2048 seq len) + 100B tokens (4096 seq len)
+- Target: Production-ready multilingual assistant
+
+## Priority Tasks
+1. Project Structure
+   - [x] Initialize repo structure
+   - [x] Set up multi-platform environments (CUDA/ROCm/JAX)
+   - [ ] Document environment setup process
+
+2. Model Documentation
+   - [ ] Create comprehensive model card
+   - [ ] Document pretraining data composition
+   - [ ] Add training logs and metrics
+   - [ ] Performance benchmarks
+
+3. Training Pipeline
+   - [ ] Port existing pretraining scripts
+   - [ ] Create unified training interface
+   - [ ] Add multi-platform support (CUDA/ROCm/JAX)
+   - [ ] Implement distributed training
+   
+4. Finetuning
+   - [x] Create finetuning dataset pipeline
+   - [ ] Implement PEFT methods (LoRA/QLoRA)
+   - [ ] Add instruction tuning capabilities
+   - [ ] Develop evaluation suite
+   + [ ] Initial OpenHermes finetuning experiment
+     - Base: bor model
+     - Target: OpenHermes 2.5 Dutch
+     - Method: Full finetuning with bfloat16
+     - Metrics: Perplexity, MMLU (Dutch)
+
+5. Evaluation & Testing
+   - [ ] Implement standard LLM benchmarks
+   - [ ] Create Dutch-specific evaluation sets
+   - [ ] Add regression testing
+   - [ ] Performance profiling
+
+6. Deployment
+   - [ ] Model quantization
+   - [ ] Serving infrastructure
+   - [ ] API design
+   - [ ] Monitoring setup
+
+## Technical Requirements
+- Multi-platform support (CUDA/ROCm/JAX/TPU)
+- Reproducible training pipeline
+- Comprehensive testing suite
+- Production deployment readiness
+
+## Quality Targets
+- Perplexity: TBD
+- MMLU (Dutch/English): TBD
+- Memory usage: TBD
+- Inference speed: TBD 

@@ -1,0 +1,17 @@
+# Add ROCm index while keeping PyPI accessible
+--extra-index-url https://download.pytorch.org/whl/rocm6.2
+
+# Install PyTorch packages first to ensure ROCm versions
+torch
+# torchvision
+# torchaudio
+
+# Install the rest with specific versions known to work with ROCm
+transformers==4.47.0
+accelerate==1.2.0
+optimum-amd==0.1.0
+sentencepiece==0.2.0
+datasets
+huggingface-hub>=0.24.0
+safetensors>=0.4.1
+-r requirements_common.txt 

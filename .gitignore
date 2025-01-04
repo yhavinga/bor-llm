@@ -1,0 +1,11 @@
+venvtorchcuda/
+venvtorchrocm/
+venvjaxcuda/
+venvjaxtpu/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+wandb/
+lightning_logs/
+.DS_Store

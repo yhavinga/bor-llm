@@ -1,0 +1,14 @@
+# Add CUDA index while keeping PyPI accessible
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# Install PyTorch packages first to ensure CUDA versions
+torch
+# torchvision
+# torchaudio
+
+# Install the rest from PyPI
+transformers
+datasets
+accelerate
+bitsandbytes
+-r requirements_common.txt 
