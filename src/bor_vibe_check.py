@@ -1,6 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 import torch
-import os
 
 def load_model(model_path):
     print("Loading tokenizer...")
