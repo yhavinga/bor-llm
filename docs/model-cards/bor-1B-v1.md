@@ -1,7 +1,14 @@
-# Bor - Dutch/English Language Model
+# Bor-1B-v1 - Dutch/English Language Model
 
 ## Model Description
+
+<img src="bor-de-wolf.jpg" align="left" width="190" style="margin-right: 15px; margin-bottom: 10px;">
+
 Bor-1B-v1 is a pre-trained multilingual language model based on the Mistral architecture, specifically designed for Dutch and English language processing. The model was pre-trained in two phases with different context lengths and dataset compositions.
+
+The model's name pays homage to "Bor de Wolf" from the beloved Dutch children's series De Fabeltjeskrant (1968-1989). While the original Bor was famous for his signature "Huuuuu!" howl echoing through the forest, this Bor's howls are more subtle - processing Dutch and English text without disturbing the neighbors!
+
+<div style="clear: both;"></div>
 
 ## Architecture
 The Mistral architecture was chosen for its broad library support and efficient implementation. The Bor-v1-1B model maintains Mistral's core structural elements while scaling down dimensions for a more compact design:
@@ -47,7 +54,7 @@ Total tokens: 37B tokens × 3 epochs = 112B total
 
 ### Phase 2 (4096 context length)
 Total tokens: 37B tokens × 2.4 epochs = 87B total
-- Balanced composition: Dutch (~55%), English (~35%), and specialized content (~10%)
+- Balanced composition: Dutch (55%), English (35%), and specialized content (~10%)
 - Dutch content: [MC4 Dutch Cleaned](https://huggingface.co/datasets/yhavinga/mc4_nl_cleaned), Wikipedia,
  [GeminiPhiDutch](https://huggingface.co/datasets/Kalamazooter/GeminiPhiDutch), [CulturaX Dutch](https://huggingface.co/datasets/uonlp/CulturaX/viewer/nl)
 - English content: [Zyda-2](https://huggingface.co/datasets/Zyphra/Zyda-2), [goodwiki](https://huggingface.co/datasets/euirim/goodwiki) and additional curated sources
