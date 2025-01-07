@@ -326,8 +326,9 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
 def main():
     print("Loading datasets...")
     datasets = {
+        'fineweb_edu_4': load_dataset('yhavinga/fineweb_edu_score_gt_4_test', split='test', num_proc=16),
         'mc4_nl': load_dataset('yhavinga/mc4_nl_cleaned', 'tiny', split='validation[:1000]', num_proc=16),
-        'culturax_nl': load_dataset('yhavinga/culturax_dutch_test', split='train', num_proc=16)
+        'culturax_nl': load_dataset('yhavinga/culturax_dutch_test', split='train', num_proc=16),
     }
 
     models = {
@@ -338,6 +339,7 @@ def main():
         'gpt-neo-1.3B-dutch': {"path": "yhavinga/gpt-neo-1.3B-dutch", "context_length": 512},
         'Llama-3.2-1B': {"path": "meta-llama/Llama-3.2-1B", "context_length": 4096},
         'Phi-3.5-mini-instruct': {"path": "microsoft/Phi-3.5-mini-instruct", "context_length": 4096},
+        'Fietje-2': {"path": "BramVanroy/fietje-2", "context_length": 4096},
     }
 
     model_kwargs = {

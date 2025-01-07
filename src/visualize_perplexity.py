@@ -68,7 +68,7 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
     # Process each model's results
     for model_name, results in results_dict.items():
         for dataset_name, data in results.items():
-            if dataset_name in ['culturax_nl', 'mc4_nl']:
+            if dataset_name in ['culturax_nl', 'mc4_nl', 'fineweb_edu_4']:
                 if not isinstance(data, dict) or 'perplexities' not in data:
                     continue
                     
@@ -114,11 +114,16 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
         'Llama-3.2-1B',
         'Bor-1B',
         'gpt-neo-1.3B-dutch',
+        'Fietje-2',
         'Phi-3.5-mini-instruct'
     ]
 
-    # Filter df to only include models in the order list
+    # Define dataset order (top to bottom in plot)
+    dataset_order = ['mc4_nl', 'culturax_nl', 'fineweb_edu_4']
+    
+    # Set categorical ordering for both model and dataset
     df['model'] = pd.Categorical(df['model'], categories=model_order, ordered=True)
+    df['dataset'] = pd.Categorical(df['dataset'], categories=dataset_order, ordered=True)
     
     # Increase font sizes
     plt.rcParams.update({
@@ -151,7 +156,8 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
     # Define dataset names mapping
     dataset_names = {
         'mc4_nl': 'MC4 NL Cleaned',
-        'culturax_nl': 'CulturaX NL'
+        'culturax_nl': 'CulturaX NL',
+        'fineweb_edu_4': 'Fineweb Edu'
     }
     
     # Update row titles directly
@@ -187,6 +193,7 @@ def create_performance_comparison(results_dict, output_dir):
         'Llama-3.2-1B',
         'Bor-1B',
         'gpt-neo-1.3B-dutch',
+        'Fietje-2',
         'Phi-3.5-mini-instruct'
     ]
     

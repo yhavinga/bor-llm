@@ -106,11 +106,11 @@ Training required multiple restarts due to software and infrastructure constrain
 
 ## Perplexity Evaluation
 
-The model's perplexity was evaluated on MC4 NL Cleaned and CulturaX NL sets, measuring both token-level and word-level perplexity. Word-level perplexity accounts for subword tokenization by averaging log probabilities across tokens within whitespace-delimited words. The violin plots show Bor-1B achieves competitive perplexity distributions compared to similarly-sized models, with median token perplexities around 15 on both datasets.
+The model's perplexity was evaluated on MC4 NL Cleaned, CulturaX NL and Fineweb Edu sets, measuring both token-level and word-level perplexity. Word-level perplexity accounts for subword tokenization by averaging log probabilities across tokens within whitespace-delimited words. The violin plots show Bor-1B achieves competitive perplexity distributions compared to similarly-sized models, with median token perplexities around 15 on both datasets.
 
 ![Perplexity Distribution Across Models](perplexity_distribution.png)
 
-The violin plots above show perplexity distributions across different models on both MC4 NL Cleaned and CulturaX NL validation sets. Several interesting patterns emerge:
+The violin plots above show perplexity distributions across different models and datasets. Several interesting patterns emerge:
 
   - Bor-1B achieves lower median perplexities than the older gpt2 dutch models.
   - The distribution is notably tighter than the GPT-2 family models, indicating more consistent performance across different text samples
@@ -119,7 +119,8 @@ The violin plots above show perplexity distributions across different models on 
   - This pattern likely reflects different tokenization strategies: multilingual models may use more subword tokens per Dutch word, leading to different word-level perplexity characteristics
   - Bor-1B demonstrates comparable word-level perplexities compared to Llama-3.2-1B
   - This suggests that Llama's lower token-level perplexity may be due to using more subword tokens per Dutch word, where predicting continuation tokens is typically easier than predicting initial word tokens
-  - Phi3.5-mini-instruct shows the lowest token and word-level complexity of all tested models, though this model is also ~3x larger than the other ~1B parameter models
+  - Fietje-2 (2.7B) shows the lowest token and word-level complexity of all tested models on Dutch.
+  - Phi3.5-mini-instruct (3.5B) shows the lowest token and word-level complexity on Fineweb Edu.
 
 ## Speed and Memory Efficiency
 
@@ -147,7 +148,6 @@ Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor
 - Best performance achieved when full context/information is provided in the prompt
 - Performance may vary between Dutch and English
 - Domain-specific performance depends on training data distribution
-- Model behaviors inherit biases present in training data
 - Architectural choice of maintaining 32 layers results in suboptimal inference speed for the parameter count
 - As parts of the training data (CulturaX, MC4) are derived from CommonCrawl, the model may have been exposed to personal or sensitive information despite cleaning efforts
 
