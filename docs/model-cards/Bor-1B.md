@@ -133,7 +133,7 @@ Bor-1B's performance was evaluated across two metrics:
 
 The metrics demonstrate Bor-1B's efficient balance of speed and memory usage with its 1B parameters and 4K context window. Actual performance varies by hardware configuration and inference parameters.
 
-Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor-llm/blob/main/src/evaluate_perplexity.py)
+Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor-llm/blob/master/src/evaluate_perplexity.py)
 
 ## Intended Use
 - Rapid experimentation with Mistral architecture for Dutch/English tasks
