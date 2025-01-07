@@ -7,11 +7,14 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from accelerate import dispatch_model
 import os
+import time
+import psutil
+import torch.cuda
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 4
 
-def calculate_word_level_perplexity(model, tokenizer, text, device='cuda'):
+def calculate_word_level_perplexity(model, tokenizer, context_length,text, device='cuda'):
     """
     Perplexity = exp(CE) = exp(-1/N ∑ log P(w_i))
     
@@ -36,6 +39,8 @@ def calculate_word_level_perplexity(model, tokenizer, text, device='cuda'):
     # Tokenize while returning offsets so we can map subword tokens back to the original text.
     encoded = tokenizer(
         text,
+        max_length=context_length,
+        truncation=True,
         return_tensors="pt",
         return_offsets_mapping=True,
         add_special_tokens=False
@@ -130,7 +135,7 @@ def calculate_word_level_perplexity(model, tokenizer, text, device='cuda'):
     if torch.isinf(mean_log_prob) or torch.isnan(mean_log_prob):
         return float('nan')
     
-    word_level_ppl = torch.exp(-mean_log_prob).item()
+    word_level_ppl = torch.exp(-mean_log_prob.clone().detach()).item()
     
     if word_level_ppl > 1e6 or word_level_ppl < 1:
         print(f"Warning: Unusual perplexity value: {word_level_ppl}")
@@ -152,7 +157,7 @@ def calculate_word_level_perplexity(model, tokenizer, text, device='cuda'):
 
 
 def calculate_token_level_perplexity(model, tokenizer, texts, context_length, stride=1024, device='cuda'):
-    """Calculate token-level perplexity for a batch of texts."""
+    """Calculate token-level perplexity and performance metrics for a batch of texts."""
     loss_fct = CrossEntropyLoss(reduction="none")
     token_ppls = []
     total_tokens = 0
@@ -163,7 +168,18 @@ def calculate_token_level_perplexity(model, tokenizer, texts, context_length, st
                          return_tensors='pt', return_attention_mask=True,
                          return_overflowing_tokens=True, stride=stride).to(device)
     
+    performance_metrics = {
+        'total_tokens': 0,
+        'inference_time': 0,
+        'peak_memory': 0,
+        'tokens_per_second': 0
+    }
+    
+    start_time = time.time()
+    initial_memory = torch.cuda.memory_allocated() if device == 'cuda' else psutil.Process().memory_info().rss
+
     for i in range(0, encodings.input_ids.size(0), BATCH_SIZE):
+        batch_start = time.time()
         batch_input_ids = encodings.input_ids[i:i+BATCH_SIZE]
         batch_attention_mask = encodings.attention_mask[i:i+BATCH_SIZE]
         target_ids = batch_input_ids.clone()
@@ -200,14 +216,31 @@ def calculate_token_level_perplexity(model, tokenizer, texts, context_length, st
         
         token_ppls.extend(seq_perplexity.tolist())
 
+        # Update performance metrics
+        batch_tokens = seq_lengths.sum().item()
+        batch_time = time.time() - batch_start
+        current_memory = torch.cuda.memory_allocated() if device == 'cuda' else psutil.Process().memory_info().rss
+        
+        performance_metrics['total_tokens'] += batch_tokens
+        performance_metrics['inference_time'] += batch_time
+        performance_metrics['peak_memory'] = max(performance_metrics['peak_memory'], current_memory - initial_memory)
+        
         del outputs
         torch.cuda.empty_cache()
 
-    return token_ppls, total_tokens, total_loss
+    performance_metrics['tokens_per_second'] = (
+        performance_metrics['total_tokens'] / performance_metrics['inference_time']
+    )
+    
+    return token_ppls, total_tokens, total_loss, performance_metrics
 
 
-def calculate_perplexities(model, tokenizer, dataset, context_length, stride=1024):
+def calculate_perplexities(model, tokenizer, dataset, context_length, stride=None):
     """Calculate both token and word-level perplexity."""
+    # Calculate stride as half of context length if not specified
+    if stride is None or stride >= context_length:
+        stride = context_length // 2
+
     token_ppls = []
     word_ppls = []
     total_tokens = 0
@@ -222,12 +255,12 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=102
         
         # Calculate word-level perplexity for each text in batch
         for text in texts:
-            word_ppl = calculate_word_level_perplexity(model, tokenizer, text, DEVICE)
+            word_ppl = calculate_word_level_perplexity(model, tokenizer, context_length, text, DEVICE)
             if not np.isnan(word_ppl):
                 word_ppls.append(word_ppl)
         
         # Calculate token-level perplexity for the batch
-        batch_token_ppls, batch_tokens, batch_loss = calculate_token_level_perplexity(
+        batch_token_ppls, batch_tokens, batch_loss, batch_perf = calculate_token_level_perplexity(
             model, tokenizer, texts, context_length, stride, DEVICE)
         
         token_ppls.extend(batch_token_ppls)
@@ -272,34 +305,52 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=102
     else:
         print("\nNo valid word perplexities found")
 
+    # Add performance metrics to final statistics
+    print("\nPerformance Metrics:")
+    print(f"Average throughput: {batch_perf['total_tokens']/batch_perf['inference_time']:.2f} tokens/second")
+    print(f"Peak memory usage: {batch_perf['peak_memory']/1024**2:.2f} MB")
+    print(f"Memory efficiency: {batch_perf['total_tokens']/(batch_perf['peak_memory']/1024**2):.2f} tokens/MB")
+
     return {
         'token_perplexities': valid_token_ppls,
         'mean_token_perplexity': np.mean(valid_token_ppls) if valid_token_ppls else float('nan'),
         'word_perplexities': valid_word_ppls,
-        'mean_word_perplexity': np.mean(valid_word_ppls) if valid_word_ppls else float('nan')
+        'mean_word_perplexity': np.mean(valid_word_ppls) if valid_word_ppls else float('nan'),
+        'performance': {
+            'throughput': batch_perf['total_tokens']/batch_perf['inference_time'],
+            'peak_memory_mb': batch_perf['peak_memory']/1024**2,
+            'tokens_per_mb': batch_perf['total_tokens']/(batch_perf['peak_memory']/1024**2)
+        }
     }
 
 def main():
     print("Loading datasets...")
     datasets = {
-        'mc4_nl': load_dataset('yhavinga/mc4_nl_cleaned', 'tiny', split='validation[:100]', num_proc=16),
-        # 'oscar_nl': load_dataset('oscar', 'unshuffled_deduplicated_nl', split='train[:10]', num_proc=16)
+        'mc4_nl': load_dataset('yhavinga/mc4_nl_cleaned', 'tiny', split='validation[:1000]', num_proc=16),
+        'culturax_nl': load_dataset('yhavinga/culturax_dutch_test', split='train', num_proc=16)
     }
 
     models = {
-        'bor_1b': {"path": "yhavinga/Bor-1B-v1", "context_length": 4096},
-        'bor_420k': {"path": "yhavinga/bor-420k", "context_length": 2048},
-        'boreas_7b': {"path": "yhavinga/Boreas-7B", "context_length": 2048},
-        'geitje_7b': {"path": "Rijgersberg/GEITje-7B", "context_length": 4096}
+        'gpt-neo-125M-dutch': {"path": "yhavinga/gpt-neo-125M-dutch", "context_length": 512},
+        'gpt2-medium-dutch': {"path": "yhavinga/gpt2-medium-dutch", "context_length": 512},
+        'gpt2-large-dutch': {"path": "yhavinga/gpt2-large-dutch", "context_length": 512},
+        'Bor-1B': {"path": "yhavinga/Bor-1B", "context_length": 4096},
+        'gpt-neo-1.3B-dutch': {"path": "yhavinga/gpt-neo-1.3B-dutch", "context_length": 512},
+        'Llama-3.2-1B': {"path": "meta-llama/Llama-3.2-1B", "context_length": 4096},
+        'Phi-3.5-mini-instruct': {"path": "microsoft/Phi-3.5-mini-instruct", "context_length": 4096},
     }
 
     model_kwargs = {
         'device_map': "auto",
         'torch_dtype': torch.bfloat16,
-        'trust_remote_code': True
+        'trust_remote_code': True,
+        'use_flash_attention_2': False
     }
 
     for model_name, model_info in models.items():
+        # Enable flash attention for non-GPT models
+        model_kwargs['use_flash_attention_2'] = 'gpt' not in model_name.lower()
+        
         safe_model_name = model_name.replace('/', '_')
         output_file = f'{safe_model_name}_evaluation_results.txt'
         
@@ -310,6 +361,11 @@ def main():
         print(f"\nLoading model {model_name}...")
         model = AutoModelForCausalLM.from_pretrained(model_info["path"], **model_kwargs)
         tokenizer = AutoTokenizer.from_pretrained(model_info["path"])
+        # Add padding token if it doesn't exist
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            model.config.pad_token_id = model.config.eos_token_id
+        
         model.eval()
 
         results = {}
@@ -321,6 +377,11 @@ def main():
                 dataset=dataset,
                 context_length=model_info["context_length"]
             )
+            
+            # Clean up GPU memory after each dataset
+            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
 
         # Save results for this model
         with open(output_file, 'w') as f:
@@ -337,9 +398,21 @@ def main():
                     f.write(f"{idx}\t{token_ppl:.2f}\t{word_ppl}\n")
                 f.write("\n")
 
-        # Free up GPU memory
+            f.write(f"\nPerformance Metrics:\n")
+            f.write(f"Throughput: {scores['performance']['throughput']:.2f} tokens/second\n")
+            f.write(f"Peak Memory: {scores['performance']['peak_memory_mb']:.2f} MB\n")
+            f.write(f"Memory Efficiency: {scores['performance']['tokens_per_mb']:.2f} tokens/MB\n")
+
+        # More thorough cleanup between models
         del model
+        del tokenizer
         torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
 
 if __name__ == '__main__':
     main() 

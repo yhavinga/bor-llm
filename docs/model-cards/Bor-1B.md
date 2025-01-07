@@ -102,6 +102,39 @@ Training required multiple restarts due to software and infrastructure constrain
   - More of technical content (mathematics, code)
 - Multiple warmup cycles visible but maintained consistent loss levels
 
+## Evaluation
+
+## Perplexity Evaluation
+
+The model's perplexity was evaluated on MC4 NL Cleaned and CulturaX NL sets, measuring both token-level and word-level perplexity. Word-level perplexity accounts for subword tokenization by averaging log probabilities across tokens within whitespace-delimited words. The violin plots show Bor-1B achieves competitive perplexity distributions compared to similarly-sized models, with median token perplexities around 15 on both datasets.
+
+![Perplexity Distribution Across Models](perplexity_distribution.png)
+
+The violin plots above show perplexity distributions across different models on both MC4 NL Cleaned and CulturaX NL validation sets. Several interesting patterns emerge:
+
+  - Bor-1B achieves lower median perplexities than the older gpt2 dutch models.
+  - The distribution is notably tighter than the GPT-2 family models, indicating more consistent performance across different text samples
+  - The Dutch-only GPT-2 models show relatively small gaps between their token and word-level perplexities
+  - In contrast, multilingual models (Llama-3.2-1B, Phi-3.5-mini-instruct) and Bor-1B show larger differences between token and word perplexities
+  - This pattern likely reflects different tokenization strategies: multilingual models may use more subword tokens per Dutch word, leading to different word-level perplexity characteristics
+  - Bor-1B demonstrates comparable word-level perplexities compared to Llama-3.2-1B
+  - This suggests that Llama's lower token-level perplexity may be due to using more subword tokens per Dutch word, where predicting continuation tokens is typically easier than predicting initial word tokens
+  - Phi3.5-mini-instruct shows the lowest token and word-level complexity of all tested models, though this model is also ~3x larger than the other ~1B parameter models
+
+## Speed and Memory Efficiency
+
+Bor-1B's performance was evaluated across two metrics:
+
+### Throughput and Memory Efficiency
+- **Forward-Pass Speed**: Forward pass duration measured in tokens/second during batch processing for parallel inference tasks
+- **Peak Memory Utilization**: Measured in tokens/MB during batch inference
+
+![Performance Metrics](performance_comparison.png)
+
+The metrics demonstrate Bor-1B's efficient balance of speed and memory usage with its 1B parameters and 4K context window. Actual performance varies by hardware configuration and inference parameters.
+
+Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor-llm/blob/main/src/evaluate_perplexity.py)
+
 ## Intended Use
 - Rapid experimentation with Mistral architecture for Dutch/English tasks
 - Single-task fine-tuning (e.g., text simplification, translation) where context contains all necessary information
