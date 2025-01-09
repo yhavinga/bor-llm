@@ -4,61 +4,15 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+import json
 
 # Define colors globally
 colors = ["#4361EE", "#2EC4B6"]
 
 def load_evaluation_results(filename):
-    """Load and parse evaluation results file."""
+    """Load and parse evaluation results from JSON file."""
     with open(filename, 'r') as f:
-        content = f.read()
-
-    sections = content.split('\n\n')
-    results = {}
-    current_dataset = None
-    
-    for section in sections:
-        if not section.strip():
-            continue
-            
-        if 'Results:' in section:
-            current_dataset = section.split(' Results:')[0].strip()
-            results[current_dataset] = {'perplexities': [], 'metrics': {}}
-            continue
-            
-        if current_dataset and 'Sample_ID\tToken_PPL\tWord_PPL' in section:
-            # Parse perplexity data
-            lines = [line for line in section.strip().split('\n') if line.strip()]
-            data = []
-            
-            # Skip the header row
-            for line in lines[1:]:
-                if line.strip():
-                    sample_id, token_ppl, word_ppl = line.split('\t')
-                    try:
-                        data.append({
-                            'Sample_ID': int(sample_id),
-                            'token_ppl': float(token_ppl),
-                            'word_ppl': float(word_ppl) if word_ppl != 'N/A' else np.nan
-                        })
-                    except ValueError:
-                        continue  # Skip any malformed lines
-            
-            if data:  # Only create DataFrame if we have valid data
-                df = pd.DataFrame(data)
-                results[current_dataset]['perplexities'] = df
-            
-        if 'Performance Metrics:' in section:
-            metrics = {}
-            for line in section.split('\n'):
-                if ':' in line:
-                    key, value = line.split(':')
-                    try:
-                        metrics[key.strip()] = float(value.split()[0])
-                    except:
-                        continue
-            results['performance'] = metrics
-            
+        results = json.load(f)
     return results
 
 def create_perplexity_distribution_plot(results_dict, output_dir):
@@ -69,10 +23,11 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
     for model_name, results in results_dict.items():
         for dataset_name, data in results.items():
             if dataset_name in ['culturax_nl', 'mc4_nl', 'fineweb_edu_4']:
-                if not isinstance(data, dict) or 'perplexities' not in data:
+                if not isinstance(data, dict):
                     continue
                     
-                df = data['perplexities']
+                # Filter token perplexities
+                token_ppls = data.get('token_perplexities', [])
                 
                 # Filter out extreme outliers (values beyond 3 IQR)
                 def remove_outliers(x):
@@ -84,8 +39,7 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
                     upper_bound = q3 + 3 * iqr
                     return [v for v in x if v <= upper_bound]
                 
-                # Filter token perplexities
-                token_ppls = remove_outliers([v for v in df['token_ppl'] if not np.isnan(v)])
+                token_ppls = remove_outliers(token_ppls)
                 model_data.extend([
                     {'model': model_name,
                      'dataset': dataset_name,
@@ -95,7 +49,8 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
                 ])
                 
                 # Filter word perplexities
-                word_ppls = remove_outliers([v for v in df['word_ppl'] if not np.isnan(v)])
+                word_ppls = data.get('word_perplexities', [])
+                word_ppls = remove_outliers(word_ppls)
                 model_data.extend([
                     {'model': model_name,
                      'dataset': dataset_name, 
@@ -108,14 +63,14 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
 
     # Define model order
     model_order = [
-        'gpt-neo-125M-dutch',
-        'gpt2-medium-dutch',
-        'gpt2-large-dutch',
-        'Llama-3.2-1B',
+        # 'gpt-neo-125M-dutch',
+        # 'gpt2-medium-dutch',
+        # 'gpt2-large-dutch',
+        # 'Llama-3.2-1B',
         'Bor-1B',
-        'gpt-neo-1.3B-dutch',
+        # 'gpt-neo-1.3B-dutch',
         'Fietje-2',
-        'Phi-3.5-mini-instruct'
+        # 'Phi-3.5-mini-instruct'
     ]
 
     # Define dataset order (top to bottom in plot)
@@ -187,29 +142,38 @@ def create_performance_comparison(results_dict, output_dir):
     metrics = []
     
     model_order = [
-        'gpt-neo-125M-dutch',
-        'gpt2-medium-dutch',
-        'gpt2-large-dutch',
-        'Llama-3.2-1B',
+        # 'gpt-neo-125M-dutch',
+        # 'gpt2-medium-dutch',
+        # 'gpt2-large-dutch',
+        # 'Llama-3.2-1B',
         'Bor-1B',
-        'gpt-neo-1.3B-dutch',
+        # 'gpt-neo-1.3B-dutch',
         'Fietje-2',
-        'Phi-3.5-mini-instruct'
+        # 'Phi-3.5-mini-instruct'
     ]
     
     # Collect metrics
-    for model_name in model_order:
-        filename = f'{model_name}_evaluation_results.txt'
-        if Path(filename).exists():
-            model_results = load_evaluation_results(filename)
-            if 'performance' in model_results:
-                perf = model_results['performance']
-                metrics.extend([
-                    {'model': model_name, 'metric': 'Throughput', 
-                     'value': perf.get('Throughput', 0)},
-                    {'model': model_name, 'metric': 'Memory Efficiency', 
-                     'value': perf.get('Memory Efficiency', 0)}
-                ])
+    for model_name, model_results in results_dict.items():
+        if 'performance' in model_results:
+            perf = model_results['performance']
+            metrics.extend([
+                {'model': model_name, 'metric': 'Throughput', 
+                 'value': perf.get('throughput', 0)},
+                {'model': model_name, 'metric': 'Memory Efficiency', 
+                 'value': perf.get('tokens_per_mb', 0)}
+            ])
+        else:
+            # Iterate over datasets to find performance data
+            for dataset_name, dataset_results in model_results.items():
+                if 'performance' in dataset_results:
+                    perf = dataset_results['performance']
+                    metrics.extend([
+                        {'model': model_name, 'metric': 'Throughput', 
+                         'value': perf.get('throughput', 0)},
+                        {'model': model_name, 'metric': 'Memory Efficiency', 
+                         'value': perf.get('tokens_per_mb', 0)}
+                    ])
+                    break  # Assume performance metrics are the same across datasets, so break after first find
     
     # Create DataFrame and set categorical order
     df = pd.DataFrame(metrics)
@@ -256,8 +220,8 @@ def main():
     
     # Collect all results first
     results_dict = {}
-    for filename in glob.glob('*_evaluation_results.txt'):
-        model_name = filename.replace('_evaluation_results.txt', '')
+    for filename in glob.glob('*_evaluation_results.json'):
+        model_name = filename.replace('_evaluation_results.json', '')
         results = load_evaluation_results(filename)
         results_dict[model_name] = results
     

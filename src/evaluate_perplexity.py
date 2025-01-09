@@ -10,6 +10,7 @@ import os
 import time
 import psutil
 import torch.cuda
+import json
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 4
@@ -156,6 +157,102 @@ def calculate_word_level_perplexity(model, tokenizer, context_length,text, devic
     return word_level_ppl
 
 
+def calculate_cumulative_word_bits(model, tokenizer, context_length, text, device='cuda'):
+    """
+    Calculates Cumulative Word-Level Bits (CWB).
+    
+    For each word j:
+    bits(word_j) = -log_2(P(word_j)) 
+                 = -log_2(∏_{k=1}^{M_j} P(t_{j,k}))
+                 = ∑_{k=1}^{M_j} -log_2(P(t_{j,k}))
+    
+    Final metric:
+    CWB = (1/W) ∑_{j=1}^W bits(word_j)
+    
+    This metric:
+    1. Naturally penalizes inefficient tokenization (more tokens = more bits)
+    2. Returns interpretable values (average bits needed per word)
+    3. Avoids numerical instability from exponentiation
+    """
+    loss_fct = CrossEntropyLoss(reduction="none")
+
+    words = text.strip().split()
+    if not words:
+        return float('nan')
+    
+    encoded = tokenizer(
+        text,
+        max_length=context_length,
+        truncation=True,
+        return_tensors="pt",
+        add_special_tokens=False
+    )
+
+    input_ids = encoded.input_ids.to(device)
+    attention_mask = encoded.attention_mask.to(device)
+    
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+    logits = outputs.logits
+    
+    # Shift for next-token prediction
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = input_ids[..., 1:].contiguous()
+    shift_attention_mask = attention_mask[..., 1:].contiguous()
+    
+    # Token-level bits (negative log2 probabilities)
+    token_loss = loss_fct(
+        shift_logits.view(-1, shift_logits.size(-1)),
+        shift_labels.view(-1)
+    )
+    token_loss = token_loss.view(shift_labels.size()) * shift_attention_mask
+    
+    # Convert from natural log to log2
+    token_bits = token_loss * torch.log2(torch.exp(torch.tensor(1.0)))
+    
+    # Map tokens to words and sum bits
+    word_bits = torch.zeros(len(words), device=device)
+    current_word_index = 0
+    char_index = 0
+
+    token_word_map = []
+    for i, token_id in enumerate(encoded.input_ids[0]):
+        token = tokenizer.convert_ids_to_tokens(token_id.item())
+        token_len = len(token)
+        if token_len == 0:
+            token_word_map.append(-1)
+            continue
+
+        while current_word_index < len(words):
+            word = words[current_word_index]
+            word_len = len(word)
+            if char_index + token_len <= char_index + word_len:
+                token_word_map.append(current_word_index)
+                if char_index + token_len >= char_index + word_len:
+                    current_word_index += 1
+                break
+            else:
+                char_index += (word_len + 1)
+                current_word_index += 1
+
+    # Accumulate bits per word
+    for i, word_idx in enumerate(token_word_map[:token_bits.size(1)]):
+        if word_idx >= 0 and word_idx < len(word_bits):
+            word_bits[word_idx] += token_bits[0, i]
+
+    # Filter out words with no tokens
+    valid_indices = (word_bits != 0)
+    word_bits = word_bits[valid_indices]
+    
+    if len(word_bits) == 0:
+        return float('nan')
+    
+    # Calculate mean bits per word
+    mean_bits = word_bits.mean().item()
+    
+    return mean_bits
+
+
 def calculate_token_level_perplexity(model, tokenizer, texts, context_length, stride=1024, device='cuda'):
     """Calculate token-level perplexity and performance metrics for a batch of texts."""
     loss_fct = CrossEntropyLoss(reduction="none")
@@ -237,12 +334,12 @@ def calculate_token_level_perplexity(model, tokenizer, texts, context_length, st
 
 def calculate_perplexities(model, tokenizer, dataset, context_length, stride=None):
     """Calculate both token and word-level perplexity."""
-    # Calculate stride as half of context length if not specified
     if stride is None or stride >= context_length:
         stride = context_length // 2
 
     token_ppls = []
     word_ppls = []
+    cwb_ppls = []
     total_tokens = 0
     total_loss = 0
     extremes = {'min_ppl': float('inf'), 'max_ppl': 0}
@@ -253,11 +350,15 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
     for batch_idx, rows in enumerate(pbar):
         texts = [row['text'] for row in rows]
         
-        # Calculate word-level perplexity for each text in batch
+        # Calculate metrics for each text in batch
         for text in texts:
             word_ppl = calculate_word_level_perplexity(model, tokenizer, context_length, text, DEVICE)
             if not np.isnan(word_ppl):
                 word_ppls.append(word_ppl)
+            
+            cwb_ppl = calculate_cumulative_word_bits(model, tokenizer, context_length, text, DEVICE)
+            if not np.isnan(cwb_ppl):
+                cwb_ppls.append(cwb_ppl)
         
         # Calculate token-level perplexity for the batch
         batch_token_ppls, batch_tokens, batch_loss, batch_perf = calculate_token_level_perplexity(
@@ -305,6 +406,19 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
     else:
         print("\nNo valid word perplexities found")
 
+    # CWB-level metrics
+    valid_cwb_ppls = [x for x in cwb_ppls if not (np.isnan(x) or np.isinf(x))]
+    if valid_cwb_ppls:
+        print("\nCumulative Word Bits metrics:")
+        cwb_percentiles = np.percentile(valid_cwb_ppls, [25, 50, 75])
+        print(f"Cumulative Word Bits distribution:")
+        print(f"25th percentile: {cwb_percentiles[0]:.2f}")
+        print(f"Median: {cwb_percentiles[1]:.2f}")
+        print(f"75th percentile: {cwb_percentiles[2]:.2f}")
+        print(f"Mean Cumulative Word Bits: {np.mean(valid_cwb_ppls):.2f}")
+    else:
+        print("\nNo valid Cumulative Word Bits found")
+
     # Add performance metrics to final statistics
     print("\nPerformance Metrics:")
     print(f"Average throughput: {batch_perf['total_tokens']/batch_perf['inference_time']:.2f} tokens/second")
@@ -316,6 +430,8 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
         'mean_token_perplexity': np.mean(valid_token_ppls) if valid_token_ppls else float('nan'),
         'word_perplexities': valid_word_ppls,
         'mean_word_perplexity': np.mean(valid_word_ppls) if valid_word_ppls else float('nan'),
+        'cumulative_word_bits': valid_cwb_ppls,
+        'mean_cumulative_word_bits': np.mean(valid_cwb_ppls) if valid_cwb_ppls else float('nan'),
         'performance': {
             'throughput': batch_perf['total_tokens']/batch_perf['inference_time'],
             'peak_memory_mb': batch_perf['peak_memory']/1024**2,
@@ -331,15 +447,20 @@ def main():
         'culturax_nl': load_dataset('yhavinga/culturax_dutch_test', split='train', num_proc=16),
     }
 
+    # select max 10 batches for quick testing
+    datasets['mc4_nl'] = datasets['mc4_nl'].select(range(40))
+    datasets['culturax_nl'] = datasets['culturax_nl'].select(range(40))
+    datasets['fineweb_edu_4'] = datasets['fineweb_edu_4'].select(range(40))
+
     models = {
-        'gpt-neo-125M-dutch': {"path": "yhavinga/gpt-neo-125M-dutch", "context_length": 512},
-        'gpt2-medium-dutch': {"path": "yhavinga/gpt2-medium-dutch", "context_length": 512},
-        'gpt2-large-dutch': {"path": "yhavinga/gpt2-large-dutch", "context_length": 512},
+        # 'gpt-neo-125M-dutch': {"path": "yhavinga/gpt-neo-125M-dutch", "context_length": 512},
+        # 'gpt2-medium-dutch': {"path": "yhavinga/gpt2-medium-dutch", "context_length": 512},
+        # 'gpt2-large-dutch': {"path": "yhavinga/gpt2-large-dutch", "context_length": 512},
         'Bor-1B': {"path": "yhavinga/Bor-1B", "context_length": 4096},
-        'gpt-neo-1.3B-dutch': {"path": "yhavinga/gpt-neo-1.3B-dutch", "context_length": 512},
-        'Llama-3.2-1B': {"path": "meta-llama/Llama-3.2-1B", "context_length": 4096},
-        'Phi-3.5-mini-instruct': {"path": "microsoft/Phi-3.5-mini-instruct", "context_length": 4096},
-        'Fietje-2': {"path": "BramVanroy/fietje-2", "context_length": 4096},
+        # 'gpt-neo-1.3B-dutch': {"path": "yhavinga/gpt-neo-1.3B-dutch", "context_length": 512},
+        # 'Llama-3.2-1B': {"path": "meta-llama/Llama-3.2-1B", "context_length": 4096},
+        # 'Phi-3.5-mini-instruct': {"path": "microsoft/Phi-3.5-mini-instruct", "context_length": 4096},
+        'Fietje-2': {"path": "BramVanroy/fietje-2", "context_length": 2048},
     }
 
     model_kwargs = {
@@ -354,7 +475,7 @@ def main():
         model_kwargs['use_flash_attention_2'] = 'gpt' not in model_name.lower()
         
         safe_model_name = model_name.replace('/', '_')
-        output_file = f'{safe_model_name}_evaluation_results.txt'
+        output_file = f'{safe_model_name}_evaluation_results.json'
         
         if os.path.exists(output_file):
             print(f"\nSkipping {model_name} - results already exist in {output_file}")
@@ -385,25 +506,9 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
 
-        # Save results for this model
+        # Save results for this model to a JSON file
         with open(output_file, 'w') as f:
-            for dataset_name, scores in results.items():
-                f.write(f"\n{dataset_name} Results:\n")
-                f.write(f"Mean token perplexity: {scores['mean_token_perplexity']:.2f}\n")
-                f.write(f"Mean word perplexity: {scores['mean_word_perplexity']:.2f}\n")
-                
-                f.write(f"\nDetailed {dataset_name} perplexities:\n")
-                f.write("Sample_ID\tToken_PPL\tWord_PPL\n")
-                for idx in range(len(scores['token_perplexities'])):
-                    token_ppl = scores['token_perplexities'][idx]
-                    word_ppl = scores['word_perplexities'][idx] if idx < len(scores['word_perplexities']) else 'N/A'
-                    f.write(f"{idx}\t{token_ppl:.2f}\t{word_ppl}\n")
-                f.write("\n")
-
-            f.write(f"\nPerformance Metrics:\n")
-            f.write(f"Throughput: {scores['performance']['throughput']:.2f} tokens/second\n")
-            f.write(f"Peak Memory: {scores['performance']['peak_memory_mb']:.2f} MB\n")
-            f.write(f"Memory Efficiency: {scores['performance']['tokens_per_mb']:.2f} tokens/MB\n")
+            json.dump(results, f, indent=4)
 
         # More thorough cleanup between models
         del model
