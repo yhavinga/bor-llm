@@ -7,7 +7,7 @@ from pathlib import Path
 import json
 
 # Define colors globally
-colors = ["#4361EE", "#2EC4B6"]
+colors = ["#4361EE", "#2EC4B6", "#7209B7", "#F72585"]
 
 def load_evaluation_results(filename):
     """Load and parse evaluation results from JSON file."""
@@ -16,7 +16,7 @@ def load_evaluation_results(filename):
     return results
 
 def create_perplexity_distribution_plot(results_dict, output_dir):
-    """Create violin plots showing perplexity distributions across models and datasets."""
+    """Create violin plots showing perplexity and CWB distributions across models and datasets."""
     model_data = []
     
     # Process each model's results
@@ -58,19 +58,41 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
                      'value': v}
                     for v in word_ppls
                 ])
+                
+                # Add cumulative word bits
+                word_bits = data.get('cumulative_word_bits', [])
+                word_bits = remove_outliers(word_bits)
+                model_data.extend([
+                    {'model': model_name,
+                     'dataset': dataset_name,
+                     'metric': 'Word Bits',
+                     'value': v}
+                    for v in word_bits
+                ])
+
+                # Add tokens per word
+                tokens_per_word = data.get('tokens_per_word', [])
+                # tokens_per_word = remove_outliers(tokens_per_word)
+                model_data.extend([
+                    {'model': model_name,
+                     'dataset': dataset_name,
+                     'metric': 'Tokens per Word',
+                     'value': v}
+                    for v in tokens_per_word
+                ])
     
     df = pd.DataFrame(model_data)
 
     # Define model order
     model_order = [
-        # 'gpt-neo-125M-dutch',
-        # 'gpt2-medium-dutch',
-        # 'gpt2-large-dutch',
-        # 'Llama-3.2-1B',
+        'gpt-neo-125M-dutch',
+        'gpt2-medium-dutch',
+        'gpt2-large-dutch',
+        'Llama-3.2-1B',
         'Bor-1B',
-        # 'gpt-neo-1.3B-dutch',
+        'gpt-neo-1.3B-dutch',
         'Fietje-2',
-        # 'Phi-3.5-mini-instruct'
+        'Phi-3.5-mini-instruct'
     ]
 
     # Define dataset order (top to bottom in plot)
@@ -80,7 +102,7 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
     df['model'] = pd.Categorical(df['model'], categories=model_order, ordered=True)
     df['dataset'] = pd.Categorical(df['dataset'], categories=dataset_order, ordered=True)
     
-    # Increase font sizes
+    # Update plot style
     plt.rcParams.update({
         'font.size': 12,
         'axes.labelsize': 14,
@@ -90,51 +112,109 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
         'legend.fontsize': 12
     })
     
-    # Create faceted plot with grid
-    g = sns.FacetGrid(df, row='dataset', height=6, aspect=3)
+    # Create figure with subplots
+    fig, axes = plt.subplots(len(dataset_order), 1, figsize=(18, 18), height_ratios=[1]*len(dataset_order))
+   
     
-    # Map the violin plot with gridlines
-    def plot_violin_with_grid(data, **kwargs):
-        ax = plt.gca()
-        ax.grid(True, linestyle='--', alpha=0.7)
-        return sns.violinplot(data=data, **kwargs)
-    
-    g.map_dataframe(plot_violin_with_grid,
-        x='model',
-        y='value',
-        hue='metric',
-        split=True,
-        density_norm='width',
-        palette=colors
-    )
-    
-    # Define dataset names mapping
+    # Dataset names mapping
     dataset_names = {
         'mc4_nl': 'MC4 NL Cleaned',
         'culturax_nl': 'CulturaX NL',
         'fineweb_edu_4': 'Fineweb Edu'
     }
     
-    # Update row titles directly
-    for ax, title in zip(g.axes.flat, g.row_names):
-        ax.set_title(dataset_names.get(title, title), size=14)
-    
-    g.set_axis_labels('Model', 'Perplexity (log scale)')
-    
-    # Set y-axis to log scale and rotate x-labels for all facets
-    for ax in g.axes.flat:
+    # Plot for each dataset
+    for idx, dataset in enumerate(dataset_order):
+        ax = axes[idx]
+        dataset_data = df[df['dataset'] == dataset]
+        
+        # Create violin plots for perplexity metrics (left y-axis)
+        ppl_data = dataset_data[dataset_data['metric'].isin(['Token PPL', 'Word PPL'])]
+        sns.violinplot(data=ppl_data, x='model', y='value', hue='metric',
+                      ax=ax, palette=colors[:2], split=True)
         ax.set_yscale('log')
-        ax.set_ylim(bottom=1)
-        ax.tick_params(axis='x', rotation=45, labelsize=12)
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=12)
+        ax.set_ylabel('Perplexity (log scale)')
+        
+        # Create second y-axis for Word Bits and Tokens per Word
+        ax2 = ax.twinx()
+        word_bits_data = dataset_data[dataset_data['metric'] == 'Word Bits']
+        
+        # Plot Word Bits on ax2
+        if not word_bits_data.empty:
+            sns.violinplot(data=word_bits_data, x='model', y='value',
+                         ax=ax2, color=colors[2], alpha=0.5)
+            
+            # Scale Word Bits
+            word_bits_min = word_bits_data['value'].min()
+            word_bits_max = word_bits_data['value'].max()
+            if np.isfinite(word_bits_min) and np.isfinite(word_bits_max):
+                margin = (word_bits_max - word_bits_min) * 0.1
+                ax2.set_ylim(word_bits_min - margin, word_bits_max + margin)
+            
+            ax2.set_ylabel('Cumulative Word Bits', color=colors[2])
+            ax2.tick_params(axis='y', labelcolor=colors[2])
+        
+        # Third y-axis for Tokens per Word
+        ax3 = ax.twinx()
+        ax3.spines['right'].set_position(('outward', 60))
+        
+        # Plot Tokens per Word on ax3
+        tokens_per_word_data = dataset_data[dataset_data['metric'] == 'Tokens per Word']
+        if not tokens_per_word_data.empty:
+            sns.violinplot(data=tokens_per_word_data, x='model', y='value',
+                         ax=ax3, color=colors[3], alpha=0.5)
+            
+            # Scale Tokens per Word
+            tokens_min = tokens_per_word_data['value'].min()
+            tokens_max = tokens_per_word_data['value'].max()
+            if np.isfinite(tokens_min) and np.isfinite(tokens_max):
+                margin = (tokens_max - tokens_min) * 0.1
+                ax3.set_ylim(tokens_min - margin, tokens_max + margin)
+            
+            ax3.set_ylabel('Tokens per Word', color=colors[3])
+            ax3.tick_params(axis='y', labelcolor=colors[3])
+
+        # Set title and adjust layout
+        ax.set_title(dataset_names.get(dataset, dataset))
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+        # Handle legend
+        if idx == 0:
+            handles1, labels1 = ax.get_legend_handles_labels()
+            handles2, _ = ax2.get_legend_handles_labels()
+            handles3, _ = ax3.get_legend_handles_labels()
+            
+            # Create custom legend handles for Word Bits and Tokens per Word
+            from matplotlib.patches import Patch
+            handles2.append(Patch(color=colors[2], alpha=0.5, label='Word Bits'))
+            handles3.append(Patch(color=colors[3], alpha=0.5, label='Tokens per Word'))
+            
+            all_handles = handles1 + handles2 + handles3
+            all_labels = labels1 + ['Word Bits', 'Tokens per Word']
+            
+            if ax.get_legend():
+                ax.get_legend().remove()
+            if ax2.get_legend():
+                ax2.get_legend().remove()
+            if ax3.get_legend():
+                ax3.get_legend().remove()
+            
+            ax.legend(all_handles, all_labels,
+                     bbox_to_anchor=(1.15, 1), loc='upper left')
+        else:
+            if ax.get_legend():
+                ax.get_legend().remove()
+            if ax2.get_legend():
+                ax2.get_legend().remove()
+            if ax3.get_legend():
+                ax3.get_legend().remove()
     
-    # Add suptitle to the entire figure
-    g.fig.suptitle('Token and Word Perplexity Distribution Across Models', y=1.02, fontsize=16)
-    
+    plt.suptitle('Token PPL, Word PPL, Cumulative Word Bits, and Tokens per Word Distribution Across Models',
+                y=1.02, fontsize=16)
     plt.tight_layout()
     
-    # Save the plot with additional top margin for the suptitle
-    plt.savefig(f'{output_dir}/perplexity_distribution.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'{output_dir}/perplexity_distribution.png', 
+                dpi=300, bbox_inches='tight')
     plt.close()
 
 def create_performance_comparison(results_dict, output_dir):
@@ -142,14 +222,14 @@ def create_performance_comparison(results_dict, output_dir):
     metrics = []
     
     model_order = [
-        # 'gpt-neo-125M-dutch',
-        # 'gpt2-medium-dutch',
-        # 'gpt2-large-dutch',
-        # 'Llama-3.2-1B',
+        'gpt-neo-125M-dutch',
+        'gpt2-medium-dutch',
+        'gpt2-large-dutch',
+        'Llama-3.2-1B',
         'Bor-1B',
-        # 'gpt-neo-1.3B-dutch',
+        'gpt-neo-1.3B-dutch',
         'Fietje-2',
-        # 'Phi-3.5-mini-instruct'
+        'Phi-3.5-mini-instruct'
     ]
     
     # Collect metrics

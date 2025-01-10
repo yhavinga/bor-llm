@@ -35,7 +35,7 @@ def calculate_word_level_perplexity(model, tokenizer, context_length,text, devic
     # This is our tokenizer-independent boundary.
     words = text.strip().split()
     if not words:
-        return float('nan')
+        return float('nan'), float('nan')
     
     # Tokenize while returning offsets so we can map subword tokens back to the original text.
     encoded = tokenizer(
@@ -46,6 +46,11 @@ def calculate_word_level_perplexity(model, tokenizer, context_length,text, devic
         return_offsets_mapping=True,
         add_special_tokens=False
     )
+    
+    # Simple calculation of average tokens per word
+    num_tokens = len(encoded.input_ids[0])
+    num_words = len(words)
+    avg_tokens_per_word = num_tokens / num_words if num_words > 0 else float('nan')
     
     # Move all tensors to device
     input_ids = encoded.input_ids.to(device)
@@ -121,20 +126,22 @@ def calculate_word_level_perplexity(model, tokenizer, context_length,text, devic
     
     # Now compute average log-probs across words, ignoring words that had no tokens
     valid_word_log_probs = []
+    tokens_per_word = []
     for i in range(len(words)):
         if word_counts[i] > 0:
             # Average subword log-prob for this word
             avg_word_log_prob = word_sums[i] / word_counts[i]
             valid_word_log_probs.append(avg_word_log_prob)
+            tokens_per_word.append(word_counts[i])
     
     if not valid_word_log_probs:
-        return float('nan')
-    
+        return float('nan'), float('nan')
+  
     # Word-level perplexity: exponent of the negative average log-prob across words
     mean_log_prob = torch.tensor(sum(valid_word_log_probs) / len(valid_word_log_probs), device=device)
     
     if torch.isinf(mean_log_prob) or torch.isnan(mean_log_prob):
-        return float('nan')
+        return float('nan'), float('nan')
     
     word_level_ppl = torch.exp(-mean_log_prob.clone().detach()).item()
     
@@ -143,7 +150,7 @@ def calculate_word_level_perplexity(model, tokenizer, context_length,text, devic
     
     # Add stability checks
     if torch.isinf(mean_log_prob) or torch.isnan(mean_log_prob):
-        return float('nan')
+        return float('nan'), float('nan')
     
     # Final perplexity calculation:
     # CE = -1/N ∑ valid_word_log_probs
@@ -154,6 +161,95 @@ def calculate_word_level_perplexity(model, tokenizer, context_length,text, devic
     if word_level_ppl > 1e6 or word_level_ppl < 1:
         print(f"Warning: Unusual perplexity value: {word_level_ppl}")
     
+    return word_level_ppl, avg_tokens_per_word
+
+
+
+def calculate_word_level_perplexity_v2(model, tokenizer, context_length, text, device='cuda'):
+    """
+    Computes word-level perplexity using geometric mean of subword probabilities.
+    Handles truncation by only considering complete words within each chunk.
+    """
+    words = text.strip().split()
+    if not words:
+        return float('nan')
+
+    encoded = tokenizer(
+        text,
+        max_length=context_length,
+        truncation=True,
+        return_tensors="pt",
+        return_offsets_mapping=True,
+        add_special_tokens=False
+    )
+
+    input_ids = encoded.input_ids.to(device)
+    attention_mask = encoded.attention_mask.to(device)
+    offsets = encoded.offset_mapping[0].tolist()
+
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+    logits = outputs.logits.to(device)
+
+    next_token_logits = logits[:, :-1, :]
+    shifted_input_ids = input_ids[:, 1:].to(device)
+
+    log_probs = torch.log_softmax(next_token_logits, dim=-1)
+    seq_token_log_probs = log_probs[0, torch.arange(shifted_input_ids.size(1)).to(device), shifted_input_ids[0]]
+
+    word_log_sums = []
+    word_counts = []
+    current_word_idx = 0
+    word_char_positions = []
+
+    char_index = 0
+    for w in words:
+        start_pos = char_index
+        end_pos = char_index + len(w)
+        word_char_positions.append((start_pos, end_pos))
+        char_index = end_pos + 1
+
+    for i, (start_char, end_char) in enumerate(offsets[:-1]):
+        token_center = (start_char + end_char) // 2
+
+        while current_word_idx < len(word_char_positions):
+            w_start, w_end = word_char_positions[current_word_idx]
+            if w_start <= token_center < w_end:
+                # Check if the word is fully within the chunk
+                if w_start >= offsets[0][0] and w_end <= offsets[-2][1]:
+                    if current_word_idx >= len(word_log_sums):
+                        word_log_sums.append(0.0)
+                        word_counts.append(0)
+                    word_log_sums[current_word_idx] += seq_token_log_probs[i].item()
+                    word_counts[current_word_idx] += 1
+                break
+            elif token_center >= w_end:
+                current_word_idx += 1
+            else:
+                break
+
+    valid_word_log_probs = []
+    for i in range(len(word_log_sums)):
+        if word_counts[i] > 0:
+            # Use geometric mean: sum of log-probs divided by count
+            avg_word_log_prob = word_log_sums[i] / word_counts[i]
+            valid_word_log_probs.append(avg_word_log_prob)
+
+    if not valid_word_log_probs:
+        return float('nan')
+
+    # Word-level perplexity: geometric mean
+    sum_log_probs = sum(valid_word_log_probs)
+    mean_log_prob = sum_log_probs / len(valid_word_log_probs)
+
+    if torch.isinf(mean_log_prob) or torch.isnan(mean_log_prob):
+        return float('nan')
+
+    word_level_ppl = torch.exp(-mean_log_prob).item()
+
+    if word_level_ppl > 1e6 or word_level_ppl < 1:
+        print(f"Warning: Unusual perplexity value: {word_level_ppl}")
+
     return word_level_ppl
 
 
@@ -343,6 +439,7 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
     total_tokens = 0
     total_loss = 0
     extremes = {'min_ppl': float('inf'), 'max_ppl': 0}
+    tokens_per_word_per_example = []
 
     total_batches = len(dataset) // BATCH_SIZE
     pbar = tqdm(chunked(dataset, BATCH_SIZE), total=total_batches, 
@@ -352,9 +449,10 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
         
         # Calculate metrics for each text in batch
         for text in texts:
-            word_ppl = calculate_word_level_perplexity(model, tokenizer, context_length, text, DEVICE)
+            word_ppl, tokens_per_word = calculate_word_level_perplexity(model, tokenizer, context_length, text, DEVICE)
             if not np.isnan(word_ppl):
                 word_ppls.append(word_ppl)
+                tokens_per_word_per_example.append(tokens_per_word)
             
             cwb_ppl = calculate_cumulative_word_bits(model, tokenizer, context_length, text, DEVICE)
             if not np.isnan(cwb_ppl):
@@ -432,6 +530,7 @@ def calculate_perplexities(model, tokenizer, dataset, context_length, stride=Non
         'mean_word_perplexity': np.mean(valid_word_ppls) if valid_word_ppls else float('nan'),
         'cumulative_word_bits': valid_cwb_ppls,
         'mean_cumulative_word_bits': np.mean(valid_cwb_ppls) if valid_cwb_ppls else float('nan'),
+        'tokens_per_word': tokens_per_word_per_example,
         'performance': {
             'throughput': batch_perf['total_tokens']/batch_perf['inference_time'],
             'peak_memory_mb': batch_perf['peak_memory']/1024**2,
@@ -447,19 +546,19 @@ def main():
         'culturax_nl': load_dataset('yhavinga/culturax_dutch_test', split='train', num_proc=16),
     }
 
-    # select max 10 batches for quick testing
-    datasets['mc4_nl'] = datasets['mc4_nl'].select(range(40))
-    datasets['culturax_nl'] = datasets['culturax_nl'].select(range(40))
-    datasets['fineweb_edu_4'] = datasets['fineweb_edu_4'].select(range(40))
+    # # select max 10 batches for quick testing
+    # datasets['mc4_nl'] = datasets['mc4_nl'].select(range(40))
+    # datasets['culturax_nl'] = datasets['culturax_nl'].select(range(40))
+    # datasets['fineweb_edu_4'] = datasets['fineweb_edu_4'].select(range(40))
 
     models = {
-        # 'gpt-neo-125M-dutch': {"path": "yhavinga/gpt-neo-125M-dutch", "context_length": 512},
-        # 'gpt2-medium-dutch': {"path": "yhavinga/gpt2-medium-dutch", "context_length": 512},
-        # 'gpt2-large-dutch': {"path": "yhavinga/gpt2-large-dutch", "context_length": 512},
+        'gpt-neo-125M-dutch': {"path": "yhavinga/gpt-neo-125M-dutch", "context_length": 512},
+        'gpt2-medium-dutch': {"path": "yhavinga/gpt2-medium-dutch", "context_length": 512},
+        'gpt2-large-dutch': {"path": "yhavinga/gpt2-large-dutch", "context_length": 512},
         'Bor-1B': {"path": "yhavinga/Bor-1B", "context_length": 4096},
-        # 'gpt-neo-1.3B-dutch': {"path": "yhavinga/gpt-neo-1.3B-dutch", "context_length": 512},
-        # 'Llama-3.2-1B': {"path": "meta-llama/Llama-3.2-1B", "context_length": 4096},
-        # 'Phi-3.5-mini-instruct': {"path": "microsoft/Phi-3.5-mini-instruct", "context_length": 4096},
+        'gpt-neo-1.3B-dutch': {"path": "yhavinga/gpt-neo-1.3B-dutch", "context_length": 512},
+        'Llama-3.2-1B': {"path": "meta-llama/Llama-3.2-1B", "context_length": 4096},
+        'Phi-3.5-mini-instruct': {"path": "microsoft/Phi-3.5-mini-instruct", "context_length": 4096},
         'Fietje-2': {"path": "BramVanroy/fietje-2", "context_length": 2048},
     }
 
