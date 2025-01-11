@@ -5,3 +5,4 @@ seaborn
 wandb
 tensorboard
 wheel
+pytest
