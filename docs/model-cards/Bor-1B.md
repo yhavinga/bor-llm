@@ -104,35 +104,98 @@ Training required multiple restarts due to software and infrastructure constrain
 
 ## Evaluation
 
+The comparison models were selected based on:
+1. Parameter count (ranging from 176M to 3.8B) to provide context around Bor-1B's size class
+2. Dutch language capabilities (either Dutch-specific or strong multilingual models)
+
+
+| Model                 | Parameters | Language | Context Length |
+|:----------------------|----------:|:---------|--------------:|
+| gpt-neo-125M-dutch    | 176M      | Dutch    | 512           |
+| gpt2-medium-dutch     | 380M      | Dutch    | 512           |
+| gpt2-large-dutch      | 812M      | Dutch    | 512           |
+| Bor-1B                | 1.19B     | Dutch/English mixed | 4096          |
+| Llama-3.2-1B          | 1.24B     | Multilingual | 128000        |
+| gpt-neo-1.3B-dutch    | 1.42B     | Dutch    | 512           |
+| Fietje-2              | 2.7B      | English/Dutch continued | 2048          |
+| Phi-3.5-mini-instruct | 3.8B      | Multilingual | 128000        |
+
+
 ## Perplexity Evaluation
 
-The model's perplexity was evaluated on MC4 NL Cleaned, CulturaX NL and Fineweb Edu sets, measuring both token-level and word-level perplexity. Word-level perplexity accounts for subword tokenization by averaging log probabilities across tokens within whitespace-delimited words. The violin plots show Bor-1B achieves competitive perplexity distributions compared to similarly-sized models, with median token perplexities around 15 on both datasets.
+The model's perplexity was evaluated on three distinct datasets:
+
+- **MC4 NL Cleaned**: A cleaned subset of mC4 (Multilingual Colossal Clean Crawled Corpus) containing Dutch web text.
+
+- **CulturaX NL**: The Dutch portion of CulturaX, a curated multilingual dataset derived from high-quality cultural and educational sources. Includes literature, academic texts, and cultural content.
+
+- **Fineweb Edu**: Educational content from the Fineweb corpus, primarily English-language academic and technical writing with emphasis on STEM subjects.
+
+<!--
+### Token-Level Perplexity (PPL)
+
+Token-level perplexity measures how well the model predicts the next token in a sequence. Lower values indicate better predictions, with a perplexity of 1.0 representing perfect prediction. The metric naturally accounts for the model's uncertainty across all possible next tokens.
+
+### Cumulative Word Bits (CWB)
+
+In addition to token-level perplexity, we also report Cumulative Word Bits (CWB), a supplementary metric to account for different tokenization strategies. CWB measures the average information content per word by:
+
+1. Computing each word's probability as the product of its subword token probabilities
+2. Converting to bits using −log₂ of the word probability
+3. Averaging across all words in the evaluation set
+
+This metric helps compare models with different tokenization strategies more fairly, as it:
+- Accounts for varying token-to-word ratios between models
+- Provides word-level rather than token-level measurements
+- Captures tokenization efficiency alongside prediction quality
+
+Below are the model parameter configurations, token-level perplexity values, token-to-word statistics, and CWB results for Bor-1B and comparison models:
+-->
+
+
+### Token-level Perplexity
+
+| dataset       | gpt-neo-125M-dutch | gpt2-medium-dutch | gpt2-large-dutch | Bor-1B | Llama-3.2-1B | gpt-neo-1.3B-dutch | Fietje-2 | Phi-3.5-mini-instruct |
+|:--------------|-------------------:|------------------:|-----------------:|-------:|-------------:|-------------------:|---------:|----------------------:|
+| mc4_nl        | 23.2              | 16.62             | 18.27            | 15.1   | 13.33        | 17.93             | 4.62     | 10.62                |
+| culturax_nl   | 29.83             | 21.18             | 23.45            | 16.18  | 14.31        | 22.89             | 4.66     | 11.24                |
+| fineweb_edu_4 | 28.51             | 17.5              | 18.89            | 14.69  | 11           | 21.27             | 12.92    | 6.86                 |
+
+### Tokens per Word (TPW)
+
+| dataset       | gpt-neo-125M-dutch | gpt2-medium-dutch | gpt2-large-dutch | Bor-1B | Llama-3.2-1B | gpt-neo-1.3B-dutch | Fietje-2 | Phi-3.5-mini-instruct |
+|:--------------|-------------------:|------------------:|-----------------:|-------:|-------------:|-------------------:|---------:|----------------------:|
+| mc4_nl        | 1.28              | 1.28             | 1.28             | 1.37   | 1.76         | 1.28               | 2.08     | 1.84                 |
+| culturax_nl   | 1.31              | 1.31             | 1.31             | 1.4    | 1.78         | 1.31               | 2.11     | 1.87                 |
+| fineweb_edu_4 | 1.72              | 1.72             | 1.72             | 1.3    | 1.18         | 1.72               | 1.16     | 1.31                 |
+
+<!--
+
+### Cumulative Word Bits (CWB)
+
+| dataset       | gpt-neo-125M-dutch | gpt2-medium-dutch | gpt2-large-dutch | Bor-1B | Llama-3.2-1B | gpt-neo-1.3B-dutch | Fietje-2 | Phi-3.5-mini-instruct |
+|:--------------|-------------------:|------------------:|-----------------:|-------:|-------------:|-------------------:|---------:|----------------------:|
+| mc4_nl        | 5.24              | 4.66             | 4.8              | 5.01   | 6.23         | 4.76               | 4.31     | 5.93                 |
+| culturax_nl   | 6.04              | 5.39             | 5.56             | 5.28   | 6.46         | 5.54               | 4.42     | 6.18                 |
+| fineweb_edu_4 | 8.18              | 6.97             | 7.14             | 4.89   | 3.95         | 7.46               | 4.13     | 3.48                 |
+
+The evaluation metrics above provide complementary perspectives on model performance through token-level perplexity and cumulative word bits:
+
+• Token-level perplexity shows how well the model predicts sub-word tokens.  
+• CWB, measured in Shannon bits, provides an average "information cost" for each word, capturing both the model's surprise and how efficiently it segments words into subword tokens.
+
+-->
+
+ The violin plots show Bor-1B achieves competitive perplexity distributions compared to similarly-sized models, with median token perplexities around 15 on both datasets.
 
 ![Perplexity Distribution Across Models](perplexity_distribution.png)
 
-The violin plots above show perplexity distributions across different models and datasets. Several interesting patterns emerge:
+Key observations:
+- Bor-1B (1.19B parameters) outperforms similarly-sized Dutch-only GPT models in perplexity metrics
+- Performance remains stable across Dutch text domains: web text (MC4), cultural content (CulturaX), and educational material (Fineweb)
+- The model achieves efficient Dutch tokenization, with lower token-to-word ratios compared to multilingual models like Llama-3.2-1B, Fietje-2, and Phi-3.5-mini-instruct
+- Fietje-2 (2.7B) achieves the best performance overall, even when compensated for the larger token per word ratio
 
-  - Bor-1B achieves lower median perplexities than the older gpt2 dutch models.
-  - The distribution is notably tighter than the GPT-2 family models, indicating more consistent performance across different text samples
-  - The Dutch-only GPT-2 models show relatively small gaps between their token and word-level perplexities
-  - In contrast, multilingual models (Llama-3.2-1B, Phi-3.5-mini-instruct) and Bor-1B show larger differences between token and word perplexities
-  - This pattern likely reflects different tokenization strategies: multilingual models may use more subword tokens per Dutch word, leading to different word-level perplexity characteristics
-  - Bor-1B demonstrates comparable word-level perplexities compared to Llama-3.2-1B
-  - This suggests that Llama's lower token-level perplexity may be due to using more subword tokens per Dutch word, where predicting continuation tokens is typically easier than predicting initial word tokens
-  - Fietje-2 (2.7B) shows the lowest token and word-level complexity of all tested models on Dutch.
-  - Phi3.5-mini-instruct (3.5B) shows the lowest token and word-level complexity on Fineweb Edu.
-
-## Speed and Memory Efficiency
-
-Bor-1B's performance was evaluated across two metrics:
-
-### Throughput and Memory Efficiency
-- **Forward-Pass Speed**: Forward pass duration measured in tokens/second during batch processing for parallel inference tasks
-- **Peak Memory Utilization**: Measured in tokens/MB during batch inference
-
-![Performance Metrics](performance_comparison.png)
-
-The metrics demonstrate Bor-1B's efficient balance of speed and memory usage with its 1B parameters and 4K context window. Actual performance varies by hardware configuration and inference parameters.
 
 Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor-llm/blob/master/src/evaluate_perplexity.py)
 

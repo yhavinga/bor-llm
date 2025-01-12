@@ -37,12 +37,12 @@ def calculate_word_level_perplexity_v2(
 ):
     """
     Computes word-level metrics including:
-    1. Word-level perplexity using geometric mean of subword probabilities
+    1. Word-level perplexity
     2. Token-level perplexity
     3. Cumulative Word-Level Bits (CWB)
 
     Word-level perplexity = exp(-1/W ∑ log P(word_j))
-    where P(word_j) = ∏_{k=1}^{M_j} P(t_{j,k})
+    where log P(word_j) = ∑_{k=1}^{M_j} log P(t_{j,k})
 
     Cumulative Word Bits (CWB):
     bits(word_j) = -log₂(P(word_j)) = ∑_{k=1}^{M_j} -log₂(P(t_{j,k}))
