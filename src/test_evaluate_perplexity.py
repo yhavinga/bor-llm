@@ -7,9 +7,13 @@ from evaluate_perplexity import calculate_word_level_perplexity_v2
 @pytest.fixture
 def model_and_tokenizer():
     model_name = "yhavinga/gpt-neo-125M-dutch"
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name, device_map="auto", torch_dtype=torch.bfloat16
-    )
+    if torch.cuda.is_available():
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, device_map="auto", torch_dtype=torch.bfloat16
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -25,7 +29,11 @@ voornamelijk in Nederland en België. De taal staat bekend om zijn
 lange samengestelde woorden en karakteristieke uitdrukkingen."""
 
     token_ppl, num_tokens, mean_bits, num_words = calculate_word_level_perplexity_v2(
-        model, tokenizer, context_length=512, text=text
+        model,
+        tokenizer,
+        context_length=512,
+        text=text,
+        device="cuda" if torch.cuda.is_available() else "cpu",
     )
 
     # Basic sanity checks

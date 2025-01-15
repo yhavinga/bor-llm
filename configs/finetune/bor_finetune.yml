@@ -1,4 +1,5 @@
-base_model: yhavinga/bor-420k-32k-110k-158k-108k-250k
+# accelerate launch -m axolotl.cli.train configs/finetune/bor_finetune.yml
+base_model: yhavinga/Bor-1B
 model_type: MistralForCausalLM
 tokenizer_type: AutoTokenizer
 
@@ -34,32 +35,36 @@ sample_packing: true
 pad_to_sequence_len: true
 
 # Training parameters
-micro_batch_size: 1
-gradient_accumulation_steps: 4
+micro_batch_size: 8
+gradient_accumulation_steps: 1
 num_epochs: 3
-learning_rate: 2e-5
+learning_rate: 1e-5
 lr_scheduler: cosine
 warmup_steps: 100
 
 # Optimizer settings
 optimizer: paged_adamw_8bit
 weight_decay: 0.1
-max_grad_norm: 1.0
-
-gpu_memory_limit: 20GiB
+#max_grad_norm: 1.0
+# Performance optimizations
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: true
+flash_attention: true
 
 # Mixed precision
 bf16: true
 tf32: true
 
 # Evaluation and logging
-eval_steps: 50
+eval_steps: 250
 save_steps: 500
 logging_steps: 5
 val_set_size: 0.05
 
 # Output
 output_dir: outputs/bor-openhermes-dutch
+save_safetensors: true
 
 # DeepSpeed integration
 deepspeed: deepspeed_configs/zero2.json

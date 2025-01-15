@@ -14,8 +14,7 @@ if not last_run_dir.exists():
     raise FileNotFoundError("last_run_prepared directory not found")
 
 latest_dir = max(
-    (d for d in last_run_dir.iterdir() if d.is_dir()),
-    key=lambda x: x.stat().st_mtime
+    (d for d in last_run_dir.iterdir() if d.is_dir()), key=lambda x: x.stat().st_mtime
 )
 
 # Load the dataset from the latest directory
@@ -26,9 +25,9 @@ random_idx = random.randint(0, len(dataset) - 1)
 sample = dataset[random_idx]
 
 # Decode and align tokens with labels
-tokens = tokenizer.convert_ids_to_tokens(sample['input_ids'])
-labels = sample['labels']
-attention_mask = sample['attention_mask']
+tokens = tokenizer.convert_ids_to_tokens(sample["input_ids"])
+labels = sample["labels"]
+attention_mask = sample["attention_mask"]
 
 print("\nFull text with color coding:")
 print("-" * 100)
@@ -43,11 +42,11 @@ print("-" * 100)
 for i, (token, label, mask) in enumerate(zip(tokens, labels, attention_mask)):
     if mask == 0:
         # Masked/padding token
-        print(Fore.LIGHTBLACK_EX + token + Style.RESET_ALL, end='')
+        print(Fore.LIGHTBLACK_EX + token + Style.RESET_ALL, end="")
     elif label == -100:
         # Input text
-        print(Fore.BLUE + token + Style.RESET_ALL, end='')
+        print(Fore.BLUE + token + Style.RESET_ALL, end="")
     else:
         # Target text
-        print(Fore.GREEN + token + Style.RESET_ALL, end='')
+        print(Fore.GREEN + token + Style.RESET_ALL, end="")
 print("\n")

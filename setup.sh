@@ -12,6 +12,7 @@ if [ $# -eq 0 ]; then
     echo "Available environment types:"
     echo "  torch-cuda  - PyTorch with CUDA support"
     echo "  torch-rocm  - PyTorch with ROCm support"
+    echo "  torch-cpu   - PyTorch with CPU support"
     echo "  jax-cuda   - JAX with CUDA support"
     echo "  jax-tpu    - JAX with TPU support"
     exit 1
@@ -27,6 +28,9 @@ case $ENV_TYPE in
     "torch-rocm")
         VENV_PATH="venvtorchrocm"
         ;;
+    "torch-cpu")
+        VENV_PATH="venvtorchcpu"
+        ;;
     "jax-cuda")
         VENV_PATH="venvjaxcuda"
         ;;
@@ -35,7 +39,7 @@ case $ENV_TYPE in
         ;;
     *)
         echo "Error: Unknown environment type: $ENV_TYPE"
-        echo "Available environment types: torch-cuda, torch-rocm, jax-cuda, jax-tpu"
+        echo "Available environment types: torch-cuda, torch-rocm, torch-cpu, jax-cuda, jax-tpu"
         exit 1
         ;;
 esac
@@ -79,6 +83,9 @@ case $ENV_TYPE in
         sudo apt install -y python3-dev
         pip install -r requirements_torch_rocm.txt
         ;;
+    "torch-cpu")
+        pip install -r requirements_torch_cpu.txt
+        ;;
     "jax-cuda")
         pip install -r requirements_jax_cuda.txt
         ;;
@@ -87,7 +94,7 @@ case $ENV_TYPE in
         ;;
     *)
         echo "Error: Unknown environment type: $ENV_TYPE"
-        echo "Available environment types: torch-cuda, torch-rocm, jax-cuda, jax-tpu"
+        echo "Available environment types: torch-cuda, torch-rocm, torch-cpu, jax-cuda, jax-tpu"
         exit 1
         ;;
 esac
@@ -101,20 +108,26 @@ else
     echo "Git LFS already installed"
 fi
 
-# Check if logged into Hugging Face
-if ! huggingface-cli whoami &> /dev/null; then
-    echo "Please login to Hugging Face:"
-    huggingface-cli login
-else
-    echo "Already logged into Hugging Face"
-fi
+# Add testing mode environment variable
+TESTING=${TESTING:-0}
 
-# Check if logged into Wandb
-if ! wandb login &> /dev/null; then
-    echo "Please login to Wandb:"
-    wandb login
+# Replace the HF and Wandb login blocks with testing mode check
+if [ "$TESTING" -eq 0 ]; then
+    if ! huggingface-cli whoami &> /dev/null; then
+        echo "Please login to Hugging Face:"
+        huggingface-cli login
+    else
+        echo "Already logged into Hugging Face"
+    fi
+
+    if ! wandb login &> /dev/null; then
+        echo "Please login to Wandb:"
+        wandb login
+    else
+        echo "Already logged into Wandb"
+    fi
 else
-    echo "Already logged into Wandb"
+    echo "Testing mode: Skipping Hugging Face and Wandb logins"
 fi
 
 echo "Environment setup complete. Activated: $ENV_TYPE"
@@ -127,6 +140,11 @@ case $ENV_TYPE in
         echo "Testing PyTorch installation..."
         $PYTHON_CMD -c 'import torch' 2>/dev/null && echo "PyTorch import: Success" || echo "PyTorch import: Failure"
         $PYTHON_CMD -c 'import torch; print(f"GPU available: {torch.cuda.is_available()}")' 
+        ;;
+    "torch-cpu")
+        echo "Testing PyTorch CPU installation..."
+        $PYTHON_CMD -c 'import torch' 2>/dev/null && echo "PyTorch import: Success" || echo "PyTorch import: Failure"
+        $PYTHON_CMD -c 'import torch; print("Using CPU-only PyTorch")'
         ;;
     "jax-cuda"|"jax-tpu")
         echo "Testing JAX installation..."
