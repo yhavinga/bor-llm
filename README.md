@@ -1,5 +1,7 @@
 # BOR LLM Project
 
+[![Tests](https://github.com/yhavinga/bor-llm/actions/workflows/tests.yml/badge.svg)](https://github.com/yhavinga/bor-llm/actions/workflows/tests.yml)
+
 A multilingual Dutch/English language model using the Mistral architecture with a custom pre-trained model.
 
 ## Features
