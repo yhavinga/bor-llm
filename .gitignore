@@ -2,6 +2,7 @@ venvtorchcuda/
 venvtorchrocm/
 venvjaxcuda/
 venvjaxtpu/
+venvjaxcpu/
 __pycache__/
 *.py[cod]
 *$py.class

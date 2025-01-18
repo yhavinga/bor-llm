@@ -10,65 +10,77 @@ from tqdm import tqdm
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def calculate_word_level_perplexity_v2(
-    model, tokenizer, context_length, text, device="cuda"
+def calculate_entropy_metrics(
+    model, tokenizer, context_length, text, device="cuda", add_start_token=False
 ):
     """
-    Computes word-level metrics including:
-    1. Token-level perplexity
-    2. Cumulative Word-Level Bits (CWB)
+    Computes sequence-level metrics:
+    1. Token-level perplexity = exp(-log_likelihood / num_tokens)
+    2. Bits per Word (BPW) = -log_likelihood_in_bits / num_words
 
-    Token-level perplexity = exp(-1/N ∑_{i=1}^N log_e P(token_i))
-    where N is total number of tokens and P(token) is the model's probability for each token
+    Where log_likelihood = ∑log P(token_i|token_{<i}, θ)
+    θ represents model parameters
 
-    Cumulative Word Bits (CWB):
-    CWB = (1/W) * -log₂(∏_{i=1}^N P(token_i))
-        = (1/W) * ∑_{i=1}^N -log_e P(token_i) / log_e(2)
-    Where W is the total number of words in the text.
+    Note: Model returns log probabilities in base e (from log_softmax),
+    which we convert to base 2 for BPW calculation.
     """
     encoded = tokenizer(
         text,
         max_length=context_length,
         truncation=True,
         return_tensors="pt",
-        add_special_tokens=False,
+        add_special_tokens=True,
     )
 
     input_ids = encoded.input_ids.to(device)
     attention_mask = encoded.attention_mask.to(device)
-    num_tokens = attention_mask.sum().item()
+
+    if add_start_token and tokenizer.bos_token_id is not None:
+        bos_tensor = torch.tensor([[tokenizer.bos_token_id]], device=device)
+        input_ids = torch.cat([bos_tensor, input_ids], dim=1)
+        attention_mask = torch.cat([torch.ones_like(bos_tensor), attention_mask], dim=1)
 
     with torch.no_grad():
         outputs = model(input_ids, attention_mask=attention_mask)
-    logits = outputs.logits.to(device)
+    logits = outputs.logits
 
     # Calculate token-level metrics using log_softmax
-    next_token_logits = logits[:, :-1, :]
-    shifted_input_ids = input_ids[:, 1:].to(device)
-    shifted_attention_mask = attention_mask[:, 1:].to(device)
+    next_token_logits = logits[:, :-1, :]  # (batch_size, seq_len - 1, vocab_size)
+    targets = input_ids[:, 1:].to(device)  # (batch_size, seq_len - 1)
+    shifted_attention_mask = attention_mask[:, 1:].to(
+        device
+    )  # (batch_size, seq_len - 1)
 
-    log_probs = torch.log_softmax(next_token_logits, dim=-1)
-    seq_token_log_probs = log_probs[
-        0, torch.arange(shifted_input_ids.size(1)).to(device), shifted_input_ids[0]
-    ]
+    # Number of predicted tokens (excluding padding)
+    num_tokens = shifted_attention_mask.sum().item()
 
-    # Calculate token-level perplexity
-    masked_log_probs = seq_token_log_probs * shifted_attention_mask[0]
-    total_log_prob = masked_log_probs.sum()
-    token_perplexity = torch.exp(-total_log_prob / shifted_attention_mask.sum()).item()
+    # # Get conditional log probabilities for each token
+    # conditional_log_probs = torch.log_softmax(next_token_logits, dim=-1)  # (batch_size, seq_len - 1, vocab_size)
+    # conditional_token_log_probs = conditional_log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    # # Apply mask and compute sequence log-likelihood ∑log P(token_i|context)
+    # valid_conditional_log_probs = conditional_token_log_probs * shifted_attention_mask[0]
+    # neg_log_likelihood = -valid_conditional_log_probs.sum()
+    # # Token-level perplexity from log-likelihood normalized by sequence length in #tokens
+    # token_perplexity = torch.exp(neg_log_likelihood / num_tokens).item()
 
-    # Convert natural log sum to base-2 bits
-    total_shannen_bits = -total_log_prob / torch.log(torch.tensor(2.0))
-    num_words = len(tokenizer.decode(input_ids[0]).split())
-    mean_shannen_bits = (total_shannen_bits / num_words).item()
+    # Using torch's crossentropyloss to do te same
+    loss_fct = torch.nn.CrossEntropyLoss(reduction="sum")
+    neg_log_likelihood = loss_fct(next_token_logits.transpose(1, 2), targets)
+    token_perplexity = torch.exp(neg_log_likelihood / num_tokens).item()
 
-    return token_perplexity, num_tokens, mean_shannen_bits, num_words
+    # Convert log-likelihood to bits and normalize by sequence length in #words for BPW
+    neg_log_likelihood_in_bits = neg_log_likelihood / torch.log(torch.tensor(2.0))
+    decoded_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
+    num_words = len(decoded_text.split())
+    bits_per_word = (neg_log_likelihood_in_bits / num_words).item()
+
+    return token_perplexity, num_tokens, bits_per_word, num_words
 
 
 def calculate_perplexities(model, tokenizer, dataset, context_length):
     token_ppls = []
     total_tokens = 0
-    cumulative_word_bits_list = []
+    bits_per_word_list = []
     detailed_metrics = []
 
     with tqdm(dataset, desc="Processing texts") as pbar:
@@ -76,9 +88,9 @@ def calculate_perplexities(model, tokenizer, dataset, context_length):
             (
                 token_ppl,
                 num_tokens,
-                mean_bits,
+                bits_per_word,
                 num_words,
-            ) = calculate_word_level_perplexity_v2(
+            ) = calculate_entropy_metrics(
                 model, tokenizer, context_length, row["text"], device=DEVICE
             )
 
@@ -86,21 +98,21 @@ def calculate_perplexities(model, tokenizer, dataset, context_length):
                 {
                     "text_id": i,
                     "token_perplexity": token_ppl,
-                    "cumulative_word_bits": mean_bits,
+                    "bits_per_word": bits_per_word,
                     "num_tokens": num_tokens,
                     "num_words": num_words,
                 }
             )
 
             token_ppls.append(token_ppl)
-            cumulative_word_bits_list.append(mean_bits)
+            bits_per_word_list.append(bits_per_word)
             total_tokens += num_tokens
 
             pbar.set_postfix(
                 {
                     "tokens": total_tokens,
                     "token_ppl": f"{token_ppl:.1f}",
-                    "bits": f"{mean_bits:.1f}",
+                    "bpw": f"{bits_per_word:.1f}",
                 }
             )
 
@@ -117,13 +129,11 @@ def calculate_perplexities(model, tokenizer, dataset, context_length):
             [tensor_to_float(x) for x in valid_token_ppls], [25, 50, 75]
         )
         mean_token_perplexity = np.mean([tensor_to_float(x) for x in valid_token_ppls])
-        mean_cumulative_word_bits = np.mean(
-            [tensor_to_float(x) for x in cumulative_word_bits_list]
-        )
+        mean_bits_per_word = np.mean([tensor_to_float(x) for x in bits_per_word_list])
     else:
         token_percentiles = [float("nan")] * 3
         mean_token_perplexity = float("nan")
-        mean_cumulative_word_bits = float("nan")
+        mean_bits_per_word = float("nan")
 
     return {
         "aggregated_metrics": {
@@ -133,13 +143,13 @@ def calculate_perplexities(model, tokenizer, dataset, context_length):
                 "75": float(token_percentiles[2]),
             },
             "mean_token_perplexity": float(mean_token_perplexity),
-            "mean_cumulative_word_bits": float(mean_cumulative_word_bits),
+            "mean_bits_per_word": float(mean_bits_per_word),
         },
         "text_level_metrics": [
             {
                 "text_id": m["text_id"],
                 "token_perplexity": tensor_to_float(m["token_perplexity"]),
-                "cumulative_word_bits": tensor_to_float(m["cumulative_word_bits"]),
+                "bits_per_word": tensor_to_float(m["bits_per_word"]),
                 "num_tokens": m["num_tokens"],
                 "num_words": m["num_words"],
             }
@@ -236,7 +246,9 @@ def main():
 
         print(f"\nLoading model {model_name}...")
         model = AutoModelForCausalLM.from_pretrained(model_info["path"], **model_kwargs)
-        tokenizer = AutoTokenizer.from_pretrained(model_info["path"])
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_info["path"], add_eos_token=True
+        )
         # Add padding token if it doesn't exist
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
