@@ -1,5 +1,6 @@
 venvtorchcuda/
 venvtorchrocm/
+venvtorchcpu/
 venvjaxcuda/
 venvjaxtpu/
 venvjaxcpu/

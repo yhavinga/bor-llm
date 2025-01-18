@@ -24,6 +24,7 @@ def model_and_tokenizer():
 def test_word_level_perplexity_dutch(model_and_tokenizer):
     model, tokenizer = model_and_tokenizer
     perplexity_metric = evaluate.load("perplexity")
+    bpw_metric = evaluate.load("bits_per_word.py", module_type="metric")
 
     text = """Wil je een beukennootje?"""
     #     De Nederlandse taal is rijk aan geschiedenis en cultuur.
@@ -42,14 +43,23 @@ def test_word_level_perplexity_dutch(model_and_tokenizer):
     )
 
     # Calculate HF perplexity
-    hf_results = perplexity_metric.compute(
+    evaluate_perplexity = perplexity_metric.compute(
         predictions=[text], model_id=model.config._name_or_path, add_start_token=False
     )
-    hf_ppl = hf_results["perplexities"][0]
+    evaluate_ppl = evaluate_perplexity["perplexities"][0]
+
+    bpw_results = bpw_metric.compute(
+        predictions=[text],
+        model_id=model.config._name_or_path,
+        add_start_token=False,
+        # batch_size=1
+    )
+    evaluate_bpw = bpw_results["bits_per_word_scores"][0]
 
     # Basic sanity checks
     assert not torch.isnan(torch.tensor(token_ppl))
     assert not torch.isnan(torch.tensor(bits_per_word))
+    assert not torch.isnan(torch.tensor(evaluate_bpw))
     assert token_ppl > 1.0
     assert num_tokens > 0
     assert num_words > 0
@@ -58,11 +68,13 @@ def test_word_level_perplexity_dutch(model_and_tokenizer):
 
     # Model-specific expectations for Dutch text
     assert token_ppl < 1000  # Reasonable upper bound for coherent Dutch text
-    assert (
-        0 < bits_per_word < 20
-    )  # Reasonable range for bits per word in natural language
+    assert 0 < bits_per_word < 20  # Reasonable range for bits per word
+    assert 0 < evaluate_bpw < 20  # Same range for HF implementation
 
-    # Compare perplexities - allow for some numerical differences
+    # Compare metrics - allow for some numerical differences
     assert (
-        abs(token_ppl - hf_ppl) < token_ppl * 0.001
+        abs(token_ppl - evaluate_ppl) < token_ppl * 0.001
+    )  # Within 0.1% relative difference
+    assert (
+        abs(bits_per_word - evaluate_bpw) < bits_per_word * 0.001
     )  # Within 0.1% relative difference
