@@ -6,3 +6,4 @@ wandb
 tensorboard
 wheel
 pytest
+evaluate
