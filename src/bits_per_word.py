@@ -14,13 +14,12 @@
 """Bits Per Word (BPW) Metric."""
 
 import datasets
+import evaluate
 import numpy as np
 import torch
+from evaluate import logging
 from torch.nn import CrossEntropyLoss
 from transformers import AutoModelForCausalLM, AutoTokenizer
-import evaluate
-from evaluate import logging
-
 
 _CITATION = """\
 @article{chip2019evaluation,
@@ -98,6 +97,7 @@ class BitsPerWord(evaluate.Metric):
 
         model = AutoModelForCausalLM.from_pretrained(model_id)
         model = model.to(device)
+
         tokenizer = AutoTokenizer.from_pretrained(model_id)
 
         # if batch_size > 1 (which generally leads to padding being required), and
@@ -144,7 +144,7 @@ class BitsPerWord(evaluate.Metric):
         else:
             assert torch.all(
                 torch.ge(attn_masks.sum(1), 2)
-            ), "When add_start_token=False, each input text must be at least two tokens long."
+            ), "When add_start_token=False, each input text must be at least two tokens long. Run with add_start_token=True if inputting strings of only one token, and remove all empty input strings."
 
         bpw_scores = []
         loss_fct = CrossEntropyLoss(reduction="none")
@@ -174,15 +174,34 @@ class BitsPerWord(evaluate.Metric):
             with torch.no_grad():
                 out_logits = model(encoded_batch, attention_mask=attn_mask).logits
 
-            shift_logits = out_logits[..., :-1, :].contiguous()
-            targets = labels[..., 1:].contiguous()
-            shift_attention_mask_batch = attn_mask[..., 1:].contiguous()
+            # For causal language modeling, at each position we predict the next token
+            # So we need to align the input and target sequences:
+            #   Input:  [BOS, t1, t2, t3]  -> predict -> [t1, t2, t3, EOS]
+            #   Therefore:
+            #   Logits: [BOS, t1, t2, t3] -> remove last  -> [BOS, t1, t2]    (input)
+            #   Labels: [BOS, t1, t2, t3] -> remove first -> [t1,  t2, t3]    (target)
 
+            shift_logits = out_logits[
+                ..., :-1, :
+            ].contiguous()  # Remove last position  [batch_size, seq_len-1, vocab_size]
+            targets = labels[
+                ..., 1:
+            ].contiguous()  # Remove first position [batch_size, seq_len-1]
+            shift_attention_mask_batch = attn_mask[
+                ..., 1:
+            ].contiguous()  # Match target shape [batch_size, seq_len-1]
+
+            # transpose(1,2) converts from [batch_size, seq_len-1, vocab_size] to [batch_size, vocab_size, seq_len-1]
+            # This is required because CrossEntropyLoss expects logits in shape (N, C, L) where:
+            # N = batch size, C = number of classes (vocab_size), L = sequence length
             token_losses = (
-                loss_fct(shift_logits.transpose(1, 2), targets)
+                loss_fct(
+                    shift_logits.transpose(1, 2), targets
+                )  # [batch_size, seq_len-1]
                 * shift_attention_mask_batch
             )
-            neg_log_likelihood = token_losses.sum()
+            # sum(1) sums along sequence length dimension, giving loss per sequence in batch
+            neg_log_likelihood = token_losses.sum(1)  # [batch_size]
 
             # Convert to bits and normalize by number of words
             neg_log_likelihood_bits = neg_log_likelihood / torch.log(torch.tensor(2.0))
