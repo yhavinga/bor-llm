@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 
 import numpy as np
 import plotext as plt
@@ -9,6 +10,11 @@ import torch.cuda
 from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+if not os.path.exists("src"):
+    print("Error: This script must be run from the project root directory")
+    print("Usage: python src/evaluate_entropy_metrics.py [--debug]")
+    sys.exit(1)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -80,7 +86,7 @@ def calculate_cross_entropy_metrics(
     return token_perplexity, num_tokens, bits_per_word, num_words
 
 
-def plot_metrics(detailed_metrics, context_length):
+def plot_metrics(detailed_metrics, context_length, model_name):
     """
     Creates a terminal plot of perplexity and bits-per-word metrics.
     """
@@ -92,18 +98,21 @@ def plot_metrics(detailed_metrics, context_length):
     )  # 75% of terminal height, minimum 12 rows
     plt.plotsize(None, plot_height)  # None preserves automatic width scaling
 
-    token_ppls = [m["token_perplexity"] for m in detailed_metrics]
-    bits_per_word_list = [m["bits_per_word"] for m in detailed_metrics]
+    # Sort metrics by bits per word
+    sorted_metrics = sorted(detailed_metrics, key=lambda x: x["bits_per_word"])
+    token_ppls = [m["token_perplexity"] for m in sorted_metrics]
+    bits_per_word_list = [m["bits_per_word"] for m in sorted_metrics]
     indices = list(range(len(token_ppls)))
+
     plt.plot(indices, token_ppls, label="Perplexity", color="red")
     plt.plot(indices, bits_per_word_list, label="Bits per word", color="blue")
-    plt.title(f"Context length: {context_length}")
-    plt.xlabel("Example index")
+    plt.title(f"{model_name} - Context length: {context_length}")
+    plt.xlabel("Example index (sorted by bits per word)")
     plt.ylabel("Score")
     plt.show()
 
 
-def calculate_dataset_metrics(model, tokenizer, dataset, context_length):
+def calculate_dataset_metrics(model, tokenizer, dataset, context_length, model_name):
     """
     Calculates perplexity and bits-per-word metrics across a dataset
     """
@@ -149,7 +158,7 @@ def calculate_dataset_metrics(model, tokenizer, dataset, context_length):
                 }
             )
 
-    plot_metrics(detailed_metrics, context_length)
+    plot_metrics(detailed_metrics, context_length, model_name)
 
     valid_token_ppls = [
         x
@@ -278,8 +287,10 @@ def main(debug=False):
         model_kwargs["use_flash_attention_2"] = "gpt" not in model_name.lower()
 
         safe_model_name = model_name.replace("/", "_")
-        output_file = (
-            f'{safe_model_name}_evaluation_results{"_debug" if debug else ""}.json'
+        os.makedirs("outputs", exist_ok=True)
+        output_file = os.path.join(
+            "outputs",
+            f'{safe_model_name}_evaluation_results{"_debug" if debug else ""}.json',
         )
 
         if os.path.exists(output_file) and not debug:
@@ -306,6 +317,7 @@ def main(debug=False):
                 tokenizer=tokenizer,
                 dataset=dataset,
                 context_length=model_info["context_length"],
+                model_name=model_name,
             )
 
             # Clean up GPU memory after each dataset

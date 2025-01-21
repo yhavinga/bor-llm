@@ -2,22 +2,21 @@
 
 [![Tests](https://github.com/yhavinga/bor-llm/actions/workflows/tests.yml/badge.svg)](https://github.com/yhavinga/bor-llm/actions/workflows/tests.yml)
 
-A multilingual Dutch/English language model using the Mistral architecture with a custom pre-trained model.
+Bor-1B is a 1.19B parameter language model optimized for Dutch and English, built on the Mistral architecture. This repository contains the training, evaluation, and deployment code for the model.
 
 ## Features
 
-- Custom pre-trained multilingual model for Dutch and English
-- Implemented using MistralForCausalLM architecture
-- Dutch-LLaMA tokenizer integration
-- Multilingual model supporting Dutch and English
-- Built on Mistral 1.1B architecture
-- Multi-platform support (CUDA/ROCm/JAX/TPU)
+- 1.19B parameter model with strong Dutch and English capabilities
+- Built on Mistral architecture with optimized dimensions
+- Custom Dutch-LLaMA tokenizer for efficient bilingual processing
+- Comprehensive training pipeline with multi-platform support
+- Evaluation tools and deployment scripts
+- Supports CUDA, ROCm, JAX, and TPU backends
 
 ## Installation
 
 1. Clone the repository:
-```
-git clone https://github.com/yourusername/bor-llm.git
+```git clone https://github.com/yourusername/bor-llm.git
 cd bor-llm
 ```
 
@@ -28,11 +27,19 @@ cd bor-llm
 
 Available environment types:
 - `torch-cuda`: PyTorch with CUDA support
-- `torch-rocm`: PyTorch with ROCm support  
+- `torch-rocm`: PyTorch with ROCm support
+- `torch-cpu`: PyTorch with CPU-only support
 - `jax-cuda`: JAX with CUDA support
 - `jax-tpu`: JAX with TPU support
 
 ## Usage
+
+### Environment Setup
+
+For testing purposes, you can skip the Hugging Face and Weights & Biases authentication:
+```bash
+TESTING=1 ./setup.sh <environment-type>
+```
 
 ### Finetuning
 
@@ -76,10 +83,10 @@ python src/bor_vibe_check.py
 ## Technical Requirements
 
 - Python 3.10+
-- CUDA/ROCm compatible GPU or TPU
+- CUDA/ROCm compatible GPU, TPU, or CPU-only setup
 - Git LFS
-- Hugging Face account
-- Weights & Biases account
+- Hugging Face account (optional in testing mode)
+- Weights & Biases account (optional in testing mode)
 
 ## License
 Apache 2.0

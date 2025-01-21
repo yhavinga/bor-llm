@@ -1,7 +1,8 @@
 import glob
 import json
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 MODEL_PARAMS = {
     "gpt-neo-125M-dutch": 176_000_000,
@@ -10,6 +11,7 @@ MODEL_PARAMS = {
     "Bor-1B": 1_190_000_000,
     "Llama-3.2-1B": 1_240_000_000,
     "gpt-neo-1.3B-dutch": 1_420_000_000,
+    "SmolLM2-1.7B": 1_710_000_000,
     "Fietje-2": 2_700_000_000,
     "Phi-3.5-mini-instruct": 3_800_000_000,
 }
@@ -21,6 +23,7 @@ MODEL_LANGUAGE = {
     "gpt-neo-1.3B-dutch": "🇳🇱",  # Dutch only
     "Bor-1B": "🇳🇱🇬🇧",  # Dutch + English
     "Llama-3.2-1B": "🌐",  # Multilingual
+    "SmolLM2-1.7B": "🇬🇧",  # English
     "Fietje-2": "🇳🇱*",  # Dutch-tuned Phi
     "Phi-3.5-mini-instruct": "🌐",  # Multilingual
 }
@@ -32,6 +35,7 @@ MODEL_CONTEXT_LENGTH = {
     "gpt-neo-1.3B-dutch": 512,
     "Bor-1B": 4096,
     "Llama-3.2-1B": 128_000,
+    "SmolLM2-1.7B": 8192,
     "Fietje-2": 2048,
     "Phi-3.5-mini-instruct": 128_000,
 }
@@ -48,8 +52,10 @@ def compute_averages():
     # Define dataset order
     dataset_order = ["mc4_nl", "culturax_nl", "fineweb_edu_4"]
 
-    for filename in glob.glob("*_evaluation_results.json"):
-        model_name = filename.replace("_evaluation_results.json", "")
+    for filename in glob.glob("outputs/*_evaluation_results.json"):
+        model_name = filename.replace("outputs/", "").replace(
+            "_evaluation_results.json", ""
+        )
         data = load_results(filename)
 
         for dataset_name, dataset_data in data.items():
@@ -62,18 +68,26 @@ def compute_averages():
             ):
                 continue
 
-            metrics = dataset_data["text_level_metrics"]
-
-            avg_metrics = {
-                "token_perplexity": np.mean([m["token_perplexity"] for m in metrics]),
-                "tokens_per_word": np.mean([m["tokens_per_word"] for m in metrics]),
-                "cumulative_word_bits": np.mean(
-                    [m["cumulative_word_bits"] for m in metrics]
-                ),
-            }
+            # Calculate average tokens per word across all texts
+            total_tokens = sum(
+                text["num_tokens"] for text in dataset_data["text_level_metrics"]
+            )
+            total_words = sum(
+                text["num_words"] for text in dataset_data["text_level_metrics"]
+            )
 
             results.append(
-                {"model": model_name, "dataset": dataset_name, **avg_metrics}
+                {
+                    "model": model_name,
+                    "dataset": dataset_name,
+                    "token_perplexity": dataset_data["aggregated_metrics"][
+                        "mean_perplexity"
+                    ],
+                    "bits_per_word": dataset_data["aggregated_metrics"][
+                        "mean_bits_per_word"
+                    ],
+                    "tokens_per_word": total_tokens / total_words,
+                }
             )
 
     df = pd.DataFrame(results)
@@ -89,9 +103,15 @@ def compute_averages():
     print(params_df.to_markdown(index=False))
 
     # Create pivot tables with correct index (datasets only)
-    metrics = ["token_perplexity", "tokens_per_word", "cumulative_word_bits"]
+    metrics = ["token_perplexity", "bits_per_word", "tokens_per_word"]
+    metric_names = {
+        "token_perplexity": "Token Perplexity",
+        "bits_per_word": "Bits per Word",
+        "tokens_per_word": "Tokens per Word",
+    }
+
     for metric in metrics:
-        print(f"\n### {metric}\n")
+        print(f"\n### {metric_names[metric]}\n")
         pivot_df = df.pivot(index="dataset", columns="model", values=metric)
 
         # Sort columns by model size
@@ -100,7 +120,14 @@ def compute_averages():
         pivot_df = pivot_df[sorted_columns]
         pivot_df = pivot_df.reindex(dataset_order)
 
-        # No more flag addition to column names
+        # Rename index for better readability
+        index_names = {
+            "mc4_nl": "MC4 (Dutch)",
+            "culturax_nl": "CulturaX (Dutch)",
+            "fineweb_edu_4": "Fineweb (English)",
+        }
+        pivot_df.index = pivot_df.index.map(index_names)
+
         print(pivot_df.round(2).to_markdown())
 
 

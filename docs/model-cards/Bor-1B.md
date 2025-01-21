@@ -117,87 +117,52 @@ The comparison models were selected based on:
 | Bor-1B                | 1.19B     | Dutch/English mixed | 4096          |
 | Llama-3.2-1B          | 1.24B     | Multilingual | 128000        |
 | gpt-neo-1.3B-dutch    | 1.42B     | Dutch    | 512           |
-| Fietje-2              | 2.7B      | English/Dutch continued | 2048          |
+| SmolLM2-1.7B          | 1.7B      | Multilingual | 8192          |
+| Fietje-2              | 2.7B      | English, Dutch continued | 2048          |
 | Phi-3.5-mini-instruct | 3.8B      | Multilingual | 128000        |
 
+## Perplexity and Bits per Word Evaluation
 
-## Perplexity Evaluation
+The model's performance was evaluated using two metrics. Token-level Perplexity (PPL) measures how well the model predicts the next token in a sequence. Since it normalizes the log-likelihood by the number of tokens, it is sensitive to tokenizer efficiency. Bits per Word (BPW) normalizes the log-likelihood of a sequence by words rather than tokens, making it more comparable across models with different tokenization strategies. For Dutch text, native Dutch gpt2 models use about 1.4 tokens per word, whereas Dutch+English Bor-1B uses about 1.5 tokens per word. Multilingual models such as SmolLM2, Llama, Phi, and Fietje use between 1.86 and 2.38 tokens per word on Dutch text. Consequently, direct comparisons based solely on PPL are less straightforward when tokenization differs significantly across models. Bits per Word (BPW) helps mitigate these discrepancies by focusing on per-word log-likelihood rather than per-token.
 
-The model's perplexity was evaluated on three distinct datasets:
-
-- **MC4 NL Cleaned**: A cleaned subset of mC4 (Multilingual Colossal Clean Crawled Corpus) containing Dutch web text.
-
-- **CulturaX NL**: The Dutch portion of CulturaX, a curated multilingual dataset derived from high-quality cultural and educational sources. Includes literature, academic texts, and cultural content.
-
-- **Fineweb Edu**: Educational content from the Fineweb corpus, primarily English-language academic and technical writing with emphasis on STEM subjects.
-
-<!--
-### Token-Level Perplexity (PPL)
-
-Token-level perplexity measures how well the model predicts the next token in a sequence. Lower values indicate better predictions, with a perplexity of 1.0 representing perfect prediction. The metric naturally accounts for the model's uncertainty across all possible next tokens.
-
-### Cumulative Word Bits (CWB)
-
-In addition to token-level perplexity, we also report Cumulative Word Bits (CWB), a supplementary metric to account for different tokenization strategies. CWB measures the average information content per word by:
-
-1. Computing each word's probability as the product of its subword token probabilities
-2. Converting to bits using −log₂ of the word probability
-3. Averaging across all words in the evaluation set
-
-This metric helps compare models with different tokenization strategies more fairly, as it:
-- Accounts for varying token-to-word ratios between models
-- Provides word-level rather than token-level measurements
-- Captures tokenization efficiency alongside prediction quality
-
-Below are the model parameter configurations, token-level perplexity values, token-to-word statistics, and CWB results for Bor-1B and comparison models:
--->
-
+The evaluation used three datasets:
+- **MC4 NL**: Dutch content from MC4
+- **CulturaX NL**: High-quality Dutch cultural and educational content
+- **Fineweb Edu**: English educational/technical content
 
 ### Token-level Perplexity
 
-| dataset       | gpt-neo-125M-dutch | gpt2-medium-dutch | gpt2-large-dutch | Bor-1B | Llama-3.2-1B | gpt-neo-1.3B-dutch | Fietje-2 | Phi-3.5-mini-instruct |
-|:--------------|-------------------:|------------------:|-----------------:|-------:|-------------:|-------------------:|---------:|----------------------:|
-| mc4_nl        | 23.2              | 16.62             | 18.27            | 15.1   | 13.33        | 17.93             | 4.62     | 10.62                |
-| culturax_nl   | 29.83             | 21.18             | 23.45            | 16.18  | 14.31        | 22.89             | 4.66     | 11.24                |
-| fineweb_edu_4 | 28.51             | 17.5              | 18.89            | 14.69  | 11           | 21.27             | 12.92    | 6.86                 |
+| dataset           |   gpt-neo-125M-dutch |   gpt2-medium-dutch |   gpt2-large-dutch |   Bor-1B |   Llama-3.2-1B |   gpt-neo-1.3B-dutch |   SmolLM2-1.7B |   Fietje-2 |   Phi-3.5-mini-instruct |
+|:------------------|---------------------:|--------------------:|-------------------:|---------:|---------------:|---------------------:|---------------:|-----------:|------------------------:|
+| MC4 (Dutch)       |                23.19 |               16.61 |              18.26 |    15.15 |          13    |                17.93 |          13.11 |       4.62 |                   10.73 |
+| CulturaX (Dutch)  |                29.83 |               21.18 |              23.44 |    16.09 |          13.8  |                22.89 |          13.99 |       4.66 |                   11.47 |
+| Fineweb (English) |                28.51 |               17.5  |              18.88 |    14.62 |          10.85 |                21.27 |           7.77 |      12.91 |                    6.92 |
 
-### Tokens per Word (TPW)
+### Bits per Word
 
-| dataset       | gpt-neo-125M-dutch | gpt2-medium-dutch | gpt2-large-dutch | Bor-1B | Llama-3.2-1B | gpt-neo-1.3B-dutch | Fietje-2 | Phi-3.5-mini-instruct |
-|:--------------|-------------------:|------------------:|-----------------:|-------:|-------------:|-------------------:|---------:|----------------------:|
-| mc4_nl        | 1.28              | 1.28             | 1.28             | 1.37   | 1.76         | 1.28               | 2.08     | 1.84                 |
-| culturax_nl   | 1.31              | 1.31             | 1.31             | 1.4    | 1.78         | 1.31               | 2.11     | 1.87                 |
-| fineweb_edu_4 | 1.72              | 1.72             | 1.72             | 1.3    | 1.18         | 1.72               | 1.16     | 1.31                 |
+| dataset           |   gpt-neo-125M-dutch |   gpt2-medium-dutch |   gpt2-large-dutch |   Bor-1B |   Llama-3.2-1B |   gpt-neo-1.3B-dutch |   SmolLM2-1.7B |   Fietje-2 |   Phi-3.5-mini-instruct |
+|:------------------|---------------------:|--------------------:|-------------------:|---------:|---------------:|---------------------:|---------------:|-----------:|------------------------:|
+| MC4 (Dutch)       |                 5.88 |                5.22 |               5.38 |     5.67 |           6.63 |                 5.34 |           8.52 |       4.85 |                    6.71 |
+| CulturaX (Dutch)  |                 6.77 |                6.04 |               6.23 |     5.96 |           6.91 |                 6.2  |           8.84 |       4.95 |                    6.98 |
+| Fineweb (English) |                 9.21 |                7.84 |               8.04 |     5.56 |           4.24 |                 8.4  |           3.67 |       4.66 |                    3.96 |
 
-<!--
+### Tokens per Word
 
-### Cumulative Word Bits (CWB)
+| dataset           |   gpt-neo-125M-dutch |   gpt2-medium-dutch |   gpt2-large-dutch |   Bor-1B |   Llama-3.2-1B |   gpt-neo-1.3B-dutch |   SmolLM2-1.7B |   Fietje-2 |   Phi-3.5-mini-instruct |
+|:------------------|---------------------:|--------------------:|-------------------:|---------:|---------------:|---------------------:|---------------:|-----------:|------------------------:|
+| MC4 (Dutch)       |                 1.4  |                1.4  |               1.4  |     1.5  |           1.86 |                 1.4  |           2.35 |       2.31 |                    2.03 |
+| CulturaX (Dutch)  |                 1.44 |                1.44 |               1.44 |     1.55 |           1.89 |                 1.44 |           2.38 |       2.33 |                    2.07 |
+| Fineweb (English) |                 1.92 |                1.92 |               1.92 |     1.49 |           1.28 |                 1.92 |           1.32 |       1.31 |                    1.48 |
 
-| dataset       | gpt-neo-125M-dutch | gpt2-medium-dutch | gpt2-large-dutch | Bor-1B | Llama-3.2-1B | gpt-neo-1.3B-dutch | Fietje-2 | Phi-3.5-mini-instruct |
-|:--------------|-------------------:|------------------:|-----------------:|-------:|-------------:|-------------------:|---------:|----------------------:|
-| mc4_nl        | 5.24              | 4.66             | 4.8              | 5.01   | 6.23         | 4.76               | 4.31     | 5.93                 |
-| culturax_nl   | 6.04              | 5.39             | 5.56             | 5.28   | 6.46         | 5.54               | 4.42     | 6.18                 |
-| fineweb_edu_4 | 8.18              | 6.97             | 7.14             | 4.89   | 3.95         | 7.46               | 4.13     | 3.48                 |
-
-The evaluation metrics above provide complementary perspectives on model performance through token-level perplexity and cumulative word bits:
-
-• Token-level perplexity shows how well the model predicts sub-word tokens.  
-• CWB, measured in Shannon bits, provides an average "information cost" for each word, capturing both the model's surprise and how efficiently it segments words into subword tokens.
-
--->
-
- The violin plots show Bor-1B achieves competitive perplexity distributions compared to similarly-sized models, with median token perplexities around 15 on both datasets.
+The violin plots show the distribution of Perplexity and Bits per Word metrics across models and datasets:
 
 ![Perplexity Distribution Across Models](perplexity_distribution.png)
 
-Key observations:
-- Bor-1B (1.19B parameters) outperforms similarly-sized Dutch-only GPT models in perplexity metrics
-- Performance remains stable across Dutch text domains: web text (MC4), cultural content (CulturaX), and educational material (Fineweb)
-- The model achieves efficient Dutch tokenization, with lower token-to-word ratios compared to multilingual models like Llama-3.2-1B, Fietje-2, and Phi-3.5-mini-instruct
-- Fietje-2 (2.7B) achieves the best performance overall, even when compensated for the larger token per word ratio
+Key observations for Bor-1B:
+- Achieves competitive Bits per Word (~5.8) on Dutch text
+- Maintains consistent performance across both Dutch and English content (CulturaX NL vs Fineweb Edu)
 
-
-Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor-llm/blob/master/src/evaluate_perplexity.py)
+Full evaluation methodology: [evaluation script](https://github.com/yhavinga/bor-llm/blob/master/src/evaluate_entropy_metrics.py)
 
 ## Intended Use
 - Rapid experimentation with Mistral architecture for Dutch/English tasks
