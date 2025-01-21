@@ -95,7 +95,14 @@ class BitsPerWord(evaluate.Metric):
         else:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        model = AutoModelForCausalLM.from_pretrained(model_id)
+        model_kwargs = {
+            "device_map": "auto",
+            "torch_dtype": torch.float32,
+            "trust_remote_code": True,
+            "use_flash_attention_2": "gpt" not in model_id.lower(),
+        }
+
+        model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
         model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_id)

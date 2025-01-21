@@ -7,3 +7,4 @@ tensorboard
 wheel
 pytest
 evaluate
+plotext

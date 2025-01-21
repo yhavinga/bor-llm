@@ -1,16 +1,19 @@
-import numpy as np
-import torch
-from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import os
-import torch.cuda
+import argparse
 import json
+import os
+
+import numpy as np
+import plotext as plt
+import torch
+import torch.cuda
+from datasets import load_dataset
 from tqdm import tqdm
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def calculate_entropy_metrics(
+def calculate_cross_entropy_metrics(
     model, tokenizer, context_length, text, device="cuda", add_start_token=False
 ):
     """
@@ -77,11 +80,36 @@ def calculate_entropy_metrics(
     return token_perplexity, num_tokens, bits_per_word, num_words
 
 
-def calculate_perplexities(model, tokenizer, dataset, context_length):
-    token_ppls = []
-    total_tokens = 0
-    bits_per_word_list = []
+def plot_metrics(detailed_metrics, context_length):
+    """
+    Creates a terminal plot of perplexity and bits-per-word metrics.
+    """
+    plt.clf()
+    # Get terminal size and set plot height
+    term_size = plt.terminal_size()
+    plot_height = max(
+        12, int(term_size[1] * 0.75)
+    )  # 75% of terminal height, minimum 12 rows
+    plt.plotsize(None, plot_height)  # None preserves automatic width scaling
+
+    token_ppls = [m["token_perplexity"] for m in detailed_metrics]
+    bits_per_word_list = [m["bits_per_word"] for m in detailed_metrics]
+    indices = list(range(len(token_ppls)))
+    plt.plot(indices, token_ppls, label="Perplexity", color="red")
+    plt.plot(indices, bits_per_word_list, label="Bits per word", color="blue")
+    plt.title(f"Context length: {context_length}")
+    plt.xlabel("Example index")
+    plt.ylabel("Score")
+    plt.show()
+
+
+def calculate_dataset_metrics(model, tokenizer, dataset, context_length):
+    """
+    Calculates perplexity and bits-per-word metrics across a dataset
+    """
     detailed_metrics = []
+    running_ppl_sum = 0
+    running_bpw_sum = 0
 
     with tqdm(dataset, desc="Processing texts") as pbar:
         for i, row in enumerate(pbar):
@@ -90,13 +118,21 @@ def calculate_perplexities(model, tokenizer, dataset, context_length):
                 num_tokens,
                 bits_per_word,
                 num_words,
-            ) = calculate_entropy_metrics(
+            ) = calculate_cross_entropy_metrics(
                 model, tokenizer, context_length, row["text"], device=DEVICE
             )
+
+            # Update running sums for valid metrics only
+            if not (np.isnan(token_ppl) or np.isinf(token_ppl)):
+                running_ppl_sum += token_ppl
+                running_bpw_sum += bits_per_word
+                mean_ppl = running_ppl_sum / (i + 1)
+                mean_bpw = running_bpw_sum / (i + 1)
 
             detailed_metrics.append(
                 {
                     "text_id": i,
+                    "text": row["text"],
                     "token_perplexity": token_ppl,
                     "bits_per_word": bits_per_word,
                     "num_tokens": num_tokens,
@@ -104,64 +140,70 @@ def calculate_perplexities(model, tokenizer, dataset, context_length):
                 }
             )
 
-            token_ppls.append(token_ppl)
-            bits_per_word_list.append(bits_per_word)
-            total_tokens += num_tokens
-
             pbar.set_postfix(
                 {
-                    "tokens": total_tokens,
                     "token_ppl": f"{token_ppl:.1f}",
                     "bpw": f"{bits_per_word:.1f}",
+                    "mean_ppl": f"{mean_ppl:.1f}",
+                    "mean_bpw": f"{mean_bpw:.1f}",
                 }
             )
 
-    valid_token_ppls = [x for x in token_ppls if not (np.isnan(x) or np.isinf(x))]
+    plot_metrics(detailed_metrics, context_length)
+
+    valid_token_ppls = [
+        x
+        for x in [m["token_perplexity"] for m in detailed_metrics]
+        if not (np.isnan(x) or np.isinf(x))
+    ]
+    valid_bpw = [
+        x
+        for x in [m["bits_per_word"] for m in detailed_metrics]
+        if not (np.isnan(x) or np.isinf(x))
+    ]
 
     def tensor_to_float(x):
-        """Helper function to safely convert tensor/scalar to float."""
         if torch.is_tensor(x):
-            return float(x.float().cpu().numpy())  # Convert bfloat16 to float32 first
+            return float(x.float().cpu().numpy())
         return float(x)
 
-    if valid_token_ppls:
-        token_percentiles = np.percentile(
-            [tensor_to_float(x) for x in valid_token_ppls], [25, 50, 75]
-        )
-        mean_token_perplexity = np.mean([tensor_to_float(x) for x in valid_token_ppls])
-        mean_bits_per_word = np.mean([tensor_to_float(x) for x in bits_per_word_list])
-    else:
-        token_percentiles = [float("nan")] * 3
-        mean_token_perplexity = float("nan")
-        mean_bits_per_word = float("nan")
-
     return {
-        "aggregated_metrics": {
-            "token_perplexity": {
-                "25": float(token_percentiles[0]),
-                "50": float(token_percentiles[1]),
-                "75": float(token_percentiles[2]),
-            },
-            "mean_token_perplexity": float(mean_token_perplexity),
-            "mean_bits_per_word": float(mean_bits_per_word),
+        "model_info": {
+            "context_length": context_length,
         },
-        "text_level_metrics": [
-            {
-                "text_id": m["text_id"],
-                "token_perplexity": tensor_to_float(m["token_perplexity"]),
-                "bits_per_word": tensor_to_float(m["bits_per_word"]),
-                "num_tokens": m["num_tokens"],
-                "num_words": m["num_words"],
-            }
-            for m in detailed_metrics
-        ],
+        "aggregated_metrics": {
+            "mean_perplexity": float(
+                np.mean([tensor_to_float(x) for x in valid_token_ppls])
+            ),
+            "median_perplexity": float(
+                np.median([tensor_to_float(x) for x in valid_token_ppls])
+            ),
+            "mean_bits_per_word": float(
+                np.mean([tensor_to_float(x) for x in valid_bpw])
+            ),
+            "median_bits_per_word": float(
+                np.median([tensor_to_float(x) for x in valid_bpw])
+            ),
+        },
+        "text_level_metrics": sorted(
+            [
+                {
+                    "text_id": m["text_id"],
+                    "text": m["text"],
+                    "perplexity": tensor_to_float(m["token_perplexity"]),
+                    "bits_per_word": tensor_to_float(m["bits_per_word"]),
+                    "num_tokens": m["num_tokens"],
+                    "num_words": m["num_words"],
+                }
+                for m in detailed_metrics
+            ],
+            key=lambda x: x["bits_per_word"],
+        ),
     }
 
 
-def main():
+def main(debug=False):
     print("Loading datasets...")
-    debug = False
-    # debug = True
 
     if debug:
         datasets = {
@@ -259,7 +301,7 @@ def main():
         results = {}
         for dataset_name, dataset in datasets.items():
             print(f"\nEvaluating {model_name} on {dataset_name}...")
-            results[dataset_name] = calculate_perplexities(
+            results[dataset_name] = calculate_dataset_metrics(
                 model=model,
                 tokenizer=tokenizer,
                 dataset=dataset,
@@ -289,4 +331,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--debug", action="store_true", help="Run in debug mode with reduced dataset"
+    )
+    args = parser.parse_args()
+
+    main(debug=args.debug)

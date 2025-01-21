@@ -3,7 +3,7 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from evaluate_perplexity import calculate_entropy_metrics
+from evaluate_entropy_metrics import calculate_cross_entropy_metrics
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ lange samengestelde woorden en karakteristieke uitdrukkingen.""",
     ]
 
     # Calculate custom metrics
-    token_ppl, num_tokens, bits_per_word, num_words = calculate_entropy_metrics(
+    token_ppl, num_tokens, bits_per_word, num_words = calculate_cross_entropy_metrics(
         model,
         tokenizer,
         context_length=512,
@@ -57,7 +57,6 @@ lange samengestelde woorden en karakteristieke uitdrukkingen.""",
         predictions=[texts[0]],
         model_id=model.config._name_or_path,
         add_start_token=False,
-        # batch_size=1
     )
     evaluate_bpw = bpw_results["bits_per_word_scores"][0]
 
@@ -91,6 +90,7 @@ lange samengestelde woorden en karakteristieke uitdrukkingen.""",
         model_id=model.config._name_or_path,
         add_start_token=False,
         batch_size=2,
+        max_length=512,
     )
     evaluate_ppls = evaluate_perplexity["perplexities"]
 
@@ -99,6 +99,7 @@ lange samengestelde woorden en karakteristieke uitdrukkingen.""",
         model_id=model.config._name_or_path,
         add_start_token=False,
         batch_size=2,
+        max_length=512,
     )
     evaluate_bpws = bpw_results["bits_per_word_scores"]
 

@@ -3,6 +3,7 @@ import json
 import os
 
 import evaluate
+import plotext as plt
 import torch
 from datasets import load_dataset
 
@@ -16,43 +17,95 @@ def evaluate_model(model_name, model_info, datasets, debug=False):
     results = {}
     for dataset_name, dataset in datasets.items():
         print(f"\nProcessing {dataset_name}...")
-        
-        # Create fresh metric instances for each dataset
-        perplexity_metric = evaluate.load("perplexity")
+
+        perplexity_metric = evaluate.load("perplexity.py")
         bpw_metric = evaluate.load("bits_per_word.py")
-        
+
         perplexity_metric.add_batch(predictions=dataset["text"])
         bpw_metric.add_batch(predictions=dataset["text"])
+
+        bpw_results = bpw_metric.compute(
+            model_id=model_info["path"],
+            max_length=model_info["context_length"],
+            add_start_token=False,
+            batch_size=32,
+        )
 
         perplexity_results = perplexity_metric.compute(
             model_id=model_info["path"],
             max_length=model_info["context_length"],
             add_start_token=False,
-        )
-        
-        bpw_results = bpw_metric.compute(
-            model_id=model_info["path"],
-            max_length=model_info["context_length"],
-            add_start_token=False,
+            batch_size=16,
         )
 
         results[dataset_name] = {
-            "aggregated_metrics": {
-                "mean_perplexity": float(torch.mean(torch.tensor(perplexity_results["perplexities"])).item()),
-                "median_perplexity": float(torch.median(torch.tensor(perplexity_results["perplexities"])).item()),
-                "mean_bits_per_word": float(torch.mean(torch.tensor(bpw_results["bits_per_word_scores"])).item()),
-                "median_bits_per_word": float(torch.median(torch.tensor(bpw_results["bits_per_word_scores"])).item()),
+            "model_info": {
+                "context_length": model_info["context_length"],
+                "path": model_info["path"],
             },
-            "text_level_metrics": sorted([
-                {
-                    "text_id": i,
-                    "text": dataset["text"][i],
-                    "perplexity": float(ppl),
-                    "bits_per_word": float(bpw),
-                }
-                for i, (ppl, bpw) in enumerate(zip(perplexity_results["perplexities"], bpw_results["bits_per_word_scores"]))
-            ], key=lambda x: x["bits_per_word"])
+            "aggregated_metrics": {
+                "mean_perplexity": float(
+                    torch.mean(torch.tensor(perplexity_results["perplexities"])).item()
+                ),
+                "median_perplexity": float(
+                    torch.median(
+                        torch.tensor(perplexity_results["perplexities"])
+                    ).item()
+                ),
+                "mean_bits_per_word": float(
+                    torch.mean(torch.tensor(bpw_results["bits_per_word_scores"])).item()
+                ),
+                "median_bits_per_word": float(
+                    torch.median(
+                        torch.tensor(bpw_results["bits_per_word_scores"])
+                    ).item()
+                ),
+            },
+            "text_level_metrics": sorted(
+                [
+                    {
+                        "text_id": i,
+                        "text": dataset["text"][i],
+                        "perplexity": float(ppl),
+                        "bits_per_word": float(bpw),
+                    }
+                    for i, (ppl, bpw) in enumerate(
+                        zip(
+                            perplexity_results["perplexities"],
+                            bpw_results["bits_per_word_scores"],
+                        )
+                    )
+                ],
+                key=lambda x: x["bits_per_word"],
+            ),
         }
+
+        # Create terminal plot
+        perplexities = [
+            item["perplexity"] for item in results[dataset_name]["text_level_metrics"]
+        ]
+        bpw_scores = [
+            item["bits_per_word"]
+            for item in results[dataset_name]["text_level_metrics"]
+        ]
+        indices = list(range(len(perplexities)))
+
+        plt.clf()
+        # Get terminal size and set plot height
+        term_size = plt.terminal_size()
+        plot_height = max(
+            12, int(term_size[1] * 0.75)
+        )  # 75% of terminal height, minimum 12 rows
+        plt.plotsize(None, plot_height)  # None preserves automatic width scaling
+
+        plt.plot(indices, perplexities, label="Perplexity", color="red")
+        plt.plot(indices, bpw_scores, label="Bits per word", color="blue")
+        plt.title(
+            f"{model_name} on {dataset_name}\nContext length: {model_info['context_length']}"
+        )
+        plt.xlabel("Example index")
+        plt.ylabel("Score")
+        plt.show()
 
         # Clean up metric instances
         del perplexity_metric
@@ -67,20 +120,20 @@ def evaluate_model(model_name, model_info, datasets, debug=False):
     return results
 
 
-def main():
-    debug = True
-
+def main(debug=False):
     if debug:
         datasets = {
             "culturax_nl": load_dataset(
                 "yhavinga/culturax_dutch_test", split="train[:73]", num_proc=16
             ),
         }
+
         models = {
-            "gpt-neo-125M-dutch": {
-                "path": "yhavinga/gpt-neo-125M-dutch",
-                "context_length": 512,
-            }
+            # "gpt-neo-125M-dutch": {
+            #     "path": "yhavinga/gpt-neo-125M-dutch",
+            #     "context_length": 512,
+            # }
+            "Bor-1B": {"path": "yhavinga/Bor-1B", "context_length": 4096},
         }
     else:
         datasets = {
@@ -130,9 +183,7 @@ def main():
 
     for model_name, model_info in models.items():
         safe_model_name = model_name.replace("/", "_")
-        output_file = (
-            f'{safe_model_name}_evaluation_results{"_debug" if debug else ""}.json'
-        )
+        output_file = f'{safe_model_name}_ctx{model_info["context_length"]}_evaluation_results{"_debug" if debug else ""}.json'
 
         if os.path.exists(output_file) and not debug:
             print(f"\nSkipping {model_name} - results already exist in {output_file}")
@@ -151,4 +202,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--debug", action="store_true", help="Run in debug mode with reduced dataset"
+    )
+    args = parser.parse_args()
+
+    main(args.debug)
