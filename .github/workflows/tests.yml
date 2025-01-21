@@ -42,7 +42,7 @@ jobs:
     - name: Run tests
       run: |
         source venvtorchcpu/bin/activate
-        pytest src/test_evaluate_perplexity.py -v --junitxml=test-results.xml
+        pytest src/test_entropy_metrics.py -v --junitxml=test-results.xml
 
     - name: Test Report
       uses: dorny/test-reporter@v1
