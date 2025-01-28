@@ -82,6 +82,7 @@ case $ENV_TYPE in
         sudo apt update
         sudo apt install -y python3-dev
         pip install -r requirements_torch_rocm.txt
+        pip install flash-attn --no-build-isolation
         ;;
     "torch-cpu")
         pip install -r requirements_torch_cpu.txt
