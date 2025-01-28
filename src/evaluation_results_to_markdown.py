@@ -11,9 +11,12 @@ MODEL_PARAMS = {
     "Bor-1B": 1_190_000_000,
     "Llama-3.2-1B": 1_240_000_000,
     "gpt-neo-1.3B-dutch": 1_420_000_000,
+    "EuroLLM-1.7B": 1_660_000_000,
     "SmolLM2-1.7B": 1_710_000_000,
     "Fietje-2": 2_700_000_000,
     "Phi-3.5-mini-instruct": 3_800_000_000,
+    "Boreas-7B": 7_240_000_000,
+    "Phi-4": 14_700_000_000,
 }
 
 MODEL_LANGUAGE = {
@@ -24,8 +27,11 @@ MODEL_LANGUAGE = {
     "Bor-1B": "🇳🇱🇬🇧",  # Dutch + English
     "Llama-3.2-1B": "🌐",  # Multilingual
     "SmolLM2-1.7B": "🇬🇧",  # English
-    "Fietje-2": "🇳🇱*",  # Dutch-tuned Phi
+    "Fietje-2": "🇬🇧🇳🇱*",  # English then Dutch-tuned Phi-2
     "Phi-3.5-mini-instruct": "🌐",  # Multilingual
+    "Boreas-7B": "🌐🇳🇱",  # Multilingual (no Dutch) then Dutch/English Mistral
+    "Phi-4": "🇬🇧",  # English
+    "EuroLLM-1.7B": "🌐",  # Multilingual including Dutch
 }
 
 MODEL_CONTEXT_LENGTH = {
@@ -38,6 +44,9 @@ MODEL_CONTEXT_LENGTH = {
     "SmolLM2-1.7B": 8192,
     "Fietje-2": 2048,
     "Phi-3.5-mini-instruct": 128_000,
+    "Boreas-7B": 2048,
+    "Phi-4": 16384,
+    "EuroLLM-1.7B": 4096,
 }
 
 

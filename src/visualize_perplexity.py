@@ -92,9 +92,12 @@ def create_perplexity_distribution_plot(results_dict, output_dir):
         "Bor-1B",
         "Llama-3.2-1B",
         # "gpt-neo-1.3B-dutch",
+        "EuroLLM-1.7B",
         "SmolLM2-1.7B",
         "Fietje-2",
         "Phi-3.5-mini-instruct",
+        "Boreas-7B",
+        "Phi-4",
     ]
 
     # Create figure

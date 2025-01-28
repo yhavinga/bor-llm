@@ -273,6 +273,18 @@ def main(debug=False):
                 "path": "HuggingFaceTB/SmolLM2-1.7B",
                 "context_length": 4096,
             },
+            "EuroLLM-1.7B": {
+                "path": "utter-project/EuroLLM-1.7B",
+                "context_length": 4096,
+            },
+            "Phi-4": {
+                "path": "microsoft/phi-4",
+                "context_length": 4096,
+            },
+            "Boreas-7B": {
+                "path": "yhavinga/Boreas-7B",
+                "context_length": 2048,
+            },
         }
 
     model_kwargs = {
