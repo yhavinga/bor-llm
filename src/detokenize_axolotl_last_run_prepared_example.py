@@ -1,9 +1,10 @@
-import datasets
-from transformers import AutoTokenizer
-import random
-from colorama import init, Fore, Back, Style
 import os
+import random
 from pathlib import Path
+
+import datasets
+from colorama import Back, Fore, Style, init
+from transformers import AutoTokenizer
 
 # Initialize colorama for Windows compatibility
 init()

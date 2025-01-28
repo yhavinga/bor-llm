@@ -1,6 +1,6 @@
+import numpy as np
 from datasets import load_dataset
 from huggingface_hub import HfApi
-import numpy as np
 
 
 def prepare_fineweb_edu():

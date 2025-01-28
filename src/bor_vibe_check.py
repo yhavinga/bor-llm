@@ -1,8 +1,8 @@
 # You can also use llama.cpp
 # ./build/bin/llama-cli -m ./outputs/bor-openhermes-dutch/converted.gguf -p "Je bent een geweldige Nederlandse AI assistent" -cnv --color --mlock --gpu-layers 32  --prio-batch 2 --threads 6
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 import torch
-from colorama import init, Fore
+from colorama import Fore, init
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 
 init()  # Initialize colorama for Windows compatibility
 
