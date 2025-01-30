@@ -14,3 +14,4 @@ lightning_logs/
 deepspeed_configs/
 .idea/
 outputs/
+dataset/finetune/
