@@ -14,22 +14,10 @@ def parse_args():
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
-        "--dataset_name_openhermes",
+        "--dataset_path",
         type=str,
-        default="yhavinga/Openhermes-2.5-dutch-97k",
-        help="Dataset name for OpenHermes dataset",
-    )
-    parser.add_argument(
-        "--dataset_name_leesplank",
-        type=str,
-        default="UWV/Leesplank_NL_wikipedia_simplifications",
-        help="Dataset name for Leesplank dataset",
-    )
-    parser.add_argument(
-        "--use_leesplank_dataset",
-        type=bool,
-        default=True,
-        help="Whether to use the Leesplank dataset",
+        required=True,
+        help="Path to the preprocessed dataset directory",
     )
     parser.add_argument(
         "--per_device_train_batch_size",
@@ -173,19 +161,13 @@ def parse_args():
         default=42,
         help="Random seed for initialization",
     )
-    parser.add_argument(
-        "--eval_dataset_size",
-        type=int,
-        default=48,
-        help="Size of eval dataset for generation examples",
-    )
     return parser.parse_args()
 
 
 def main(args):
     import torch
     import wandb
-    from datasets import concatenate_datasets, load_dataset
+    from datasets import load_from_disk
     from peft import LoraConfig
     from transformers import (AutoModelForCausalLM, AutoTokenizer,
                               PreTrainedTokenizerFast, TrainerControl,
@@ -204,12 +186,16 @@ def main(args):
             self.accelerator = accelerator
 
         def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics=None, **kwargs):
+            # Early return if not main process
             if not self.accelerator.is_main_process:
                 return
 
             model = kwargs.get('model')
             if model is None:
                 return
+
+            # Move model to the correct device
+            model = self.accelerator.unwrap_model(model)
 
             # Process examples in batch
             examples = self.eval_dataset.select(range(2))
@@ -300,11 +286,21 @@ def main(args):
     # Set environment variable for experimental Flash Attention support on ROCm
     os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
 
+    # Load the preprocessed dataset
+    dataset = load_from_disk(args.dataset_path)
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["validation"]
+
+    if accelerator.is_main_process:
+        print(f"\nDataset Overview:")
+        print(f"Training examples: {len(train_dataset):,}")
+        print(f"Validation examples: {len(eval_dataset):,}\n")
+
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name_or_path,
         model_max_length=args.max_seq_length,
-        padding_side="left",
+        padding_side="right",
         add_eos_token=True,
     )
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
@@ -342,85 +338,6 @@ def main(args):
         print(f"LoRA target modules: {peft_config.target_modules}")
         print(f"LoRA rank (r): {peft_config.r}")
         print(f"LoRA alpha: {peft_config.lora_alpha}\n")
-
-    # Load and shuffle datasets with seed
-    dataset_openhermes_raw = load_dataset(
-        args.dataset_name_openhermes, split="train"
-    ).shuffle(seed=args.seed)
-    dataset_leesplank_raw = load_dataset(
-        args.dataset_name_leesplank, split="train"
-    ).shuffle(seed=args.seed)
-
-    # Prepare evaluation and training datasets
-    eval_dataset_openhermes = dataset_openhermes_raw.select(
-        range(args.eval_dataset_size)
-    )
-    dataset_openhermes = dataset_openhermes_raw.select(
-        range(args.eval_dataset_size, 50000 + args.eval_dataset_size)
-    )
-
-    # Remove all columns except 'messages' from OpenHermes dataset
-    eval_dataset_openhermes = eval_dataset_openhermes.remove_columns(
-        [col for col in eval_dataset_openhermes.column_names if col != "messages"]
-    )
-    dataset_openhermes = dataset_openhermes.remove_columns(
-        [col for col in dataset_openhermes.column_names if col != "messages"]
-    )
-
-    # Format Leesplank dataset if requested (only format the rows we need)
-    if args.use_leesplank_dataset:
-        dataset_leesplank_raw = dataset_leesplank_raw.select(
-            range(50000 + args.eval_dataset_size)
-        )
-
-        def format_chat_leesplank(examples):
-            formatted_messages = [
-                [
-                    {"role": "user", "content": "Vereenvoudig deze tekst: " + prompt},
-                    {"role": "assistant", "content": result},
-                ]
-                for prompt, result in zip(examples["prompt"], examples["result"])
-            ]
-            return {"messages": formatted_messages}
-
-        dataset_leesplank = dataset_leesplank_raw.map(
-            format_chat_leesplank,
-            batched=True,
-            batch_size=1000,
-            num_proc=4,
-            remove_columns=dataset_leesplank_raw.column_names,
-        )
-
-        eval_dataset_leesplank = dataset_leesplank.select(
-            range(args.eval_dataset_size)
-        )
-        dataset_leesplank = dataset_leesplank.select(
-            range(args.eval_dataset_size, 50000 + args.eval_dataset_size)
-        )
-        eval_dataset_combined = concatenate_datasets(
-            [eval_dataset_openhermes, eval_dataset_leesplank]
-        )
-        dataset_combined = concatenate_datasets([dataset_openhermes, dataset_leesplank])
-    else:
-        eval_dataset_combined = eval_dataset_openhermes
-        dataset_combined = dataset_openhermes
-
-    # def format_chat_to_text(examples):
-    #     """Convert chat messages to formatted text using tokenizer's chat template"""
-    #     formatted_text = [
-    #         tokenizer.apply_chat_template(messages, tokenize=False)
-    #         for messages in examples["messages"]
-    #     ]
-    #     return {"text": formatted_text}
-    #
-    # eval_dataset_combined = eval_dataset_combined.map(
-    #     format_chat_to_text,
-    #     remove_columns=eval_dataset_combined.column_names,
-    #     batched=True,
-    # ).shuffle(seed=42)
-    # dataset_combined = dataset_combined.map(
-    #     format_chat_to_text, remove_columns=dataset_combined.column_names, batched=True
-    # ).shuffle(seed=42)
 
     # First create SFTConfig with all training arguments
     training_args = SFTConfig(
@@ -466,16 +383,18 @@ def main(args):
         save_safetensors=True,
         logging_nan_inf_filter=True,  # Filters out NaN/Inf values in logging
         save_total_limit=2,
+        save_strategy="steps",
+        save_only_model=False
     )
 
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         tokenizer=tokenizer,
-        train_dataset=dataset_combined,
-        eval_dataset=eval_dataset_combined,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         peft_config=peft_config,
-        callbacks=[GenerationEvalCallback(eval_dataset_combined, tokenizer, accelerator)],
+        # callbacks=[GenerationEvalCallback(eval_dataset, tokenizer, accelerator)],
     )
 
     # Train the model
