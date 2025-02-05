@@ -1,0 +1,84 @@
+# accelerate launch --multi_gpu --num_processes 2 -m axolotl.cli.train configs/finetune/bor_finetune_qlora.yml
+# python3 -m axolotl.cli.merge_lora configs/finetune/bor_finetune_qlora.yml --lora_model_dir="./outputs/bor-openhermes-dutch-qlora/"
+
+base_model: yhavinga/Bor-1B-v1
+model_type: MistralForCausalLM
+tokenizer_type: AutoTokenizer
+
+load_in_8bit: false
+load_in_4bit: true
+
+strict: false
+
+datasets:
+  - path: yhavinga/openhermes-dutch-sft
+    type: chat_template
+    chat_template: tokenizer_default
+    field_messages: messages
+    message_field_role: role
+    message_field_content: content
+    roles:
+      user: ["human", "user"]
+      assistant: ["gpt", "assistant"]
+      system: ["system"]
+      tool: ["tool"]
+
+# Output
+dataset_prepared_path: last_run_prepared
+output_dir: outputs/bor-openhermes-dutch-qlora
+save_safetensors: true
+
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+# Add 4-bit specific settings
+bnb_4bit_compute_dtype: bfloat16
+bnb_4bit_quant_type: nf4
+use_nested_quant: false
+
+# LoRA settings optimized for 8-bit training
+adapter: qlora
+lora_r: 32
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target_linear: true
+
+# Training parameters
+micro_batch_size: 8
+gradient_accumulation_steps: 1
+num_epochs: 1
+learning_rate: 1e-4
+lr_scheduler: cosine
+warmup_steps: 100
+
+# Optimizer settings
+optimizer: adamw_torch
+weight_decay: 0.1
+#max_grad_norm: 1.0
+
+# Performance optimizations
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: true
+flash_attention: true
+
+# Mixed precision
+bf16: true
+tf32: true
+
+# Evaluation and logging
+eval_steps: 50
+save_steps: 500
+logging_steps: 5
+val_set_size: 0.05
+
+# DeepSpeed integration
+deepspeed: deepspeed_configs/zero2.json
+# # Add device map settings
+# device_map: auto
+# max_memory: {0: "24GiB", 1: "24GiB"}
+
+# Optional monitoring
+wandb_project: bor-finetune
+wandb_entity: yepster
