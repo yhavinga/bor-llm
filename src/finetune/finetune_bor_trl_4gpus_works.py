@@ -5,8 +5,14 @@ from dotenv import load_dotenv
 from datasets import load_from_disk
 from trl import SFTTrainer, SFTConfig
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import wandb
 
+
+print(f"CUDA available: {torch.cuda.is_available()}")
+print(f"Total GPUs: {torch.cuda.device_count()}")
+
+for i in range(torch.cuda.device_count()):
+    print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+print("---------------------------------------------------")
 
 load_dotenv()  # For HF_TOKEN
 
@@ -18,15 +24,11 @@ def setup_distributed():
     rank = dist.get_rank()
     world_size = dist.get_world_size()
 
-    if rank == 0:
-        print(f"CUDA available: {torch.cuda.is_available()}")
-        print(f"Total GPUs: {torch.cuda.device_count()}")
-
     # Ensure each process gets a unique GPU
     local_rank = rank % torch.cuda.device_count()
     torch.cuda.set_device(local_rank)
 
-    print(f"Rank {rank} using GPU {local_rank}: {torch.cuda.get_device_name(local_rank)} (total GPUs: {torch.cuda.device_count()}) world size: {world_size}")
+    print(f"Rank {rank} using GPU {local_rank} (total GPUs: {torch.cuda.device_count()}) world size: {world_size}")
 
 
 def prepare_data():
@@ -46,25 +48,11 @@ def prepare_data():
 def main():
     setup_distributed()
     
-    # Initialize wandb only on main process
-    if dist.get_rank() == 0:
-        wandb.init(project="mistral-bor-1b-finetuning", name="bor-1b-dutch-sft-4gpus")
-    
+    # Check if GPU assignment is correct
+    print(f"Process {dist.get_rank()} is using GPU {torch.cuda.current_device()}")
+
     # Load the data
     ds = prepare_data()
-
-    output_dir = "output/bor-1b-finetune"
-    
-    if os.path.exists(output_dir):
-        checkpoints = [f for f in os.listdir(output_dir) if f.startswith('checkpoint-')]
-        if checkpoints:
-            latest_checkpoint = os.path.join(output_dir, sorted(checkpoints, key=lambda x: int(x.split('-')[1]))[-1])
-            if dist.get_rank() == 0:
-                print(f"Resuming from checkpoint: {latest_checkpoint}")
-        else:
-            latest_checkpoint = None
-    else:
-        latest_checkpoint = None
 
     # Get tokenizer with proper configuration
     model_id = "yhavinga/Bor-1b"
@@ -88,6 +76,7 @@ def main():
         # max_position_embeddings=2048,
     )
 
+    output_dir = "qlora_output/bor-1b-finetune"
     training_args = SFTConfig(
         output_dir=output_dir,
         learning_rate=5e-5,
@@ -95,7 +84,7 @@ def main():
         per_device_eval_batch_size=16,
         gradient_accumulation_steps=1,
         num_train_epochs=1,
-        max_steps=len(ds['train']) // 16 // 4,  # Total steps
+        max_steps=len(ds['train']) // 16 // 4,
         warmup_steps=20,
         logging_strategy="steps",
         logging_steps=10,
@@ -103,24 +92,17 @@ def main():
         eval_steps=10,
         save_strategy="steps",
         save_steps=100,
-        save_total_limit=3,
         do_eval=True,
         lr_scheduler_type="cosine",
         fp16=False,
         bf16=True,
         gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={'use_reentrant': False},
-        report_to="wandb",
+        report_to="none",
         ddp_find_unused_parameters=False,
         ddp_backend='nccl',
         max_grad_norm=1.0,
-        remove_unused_columns=True,
-        resume_from_checkpoint=latest_checkpoint,
-        save_safetensors=True,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        ignore_data_skip=False,
-        overwrite_output_dir=False,
+        # Remove unused columns to let TRL handle the chat template
+        remove_unused_columns=True
     )
 
     trainer = SFTTrainer(
@@ -131,7 +113,7 @@ def main():
         processing_class=tokenizer,
     )
 
-    train_result = trainer.train(resume_from_checkpoint=latest_checkpoint)
+    train_result = trainer.train()
 
     metrics = train_result.metrics
     metrics["train_samples"] = len(ds['train'])
@@ -139,9 +121,6 @@ def main():
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
     trainer.save_state()
-
-    if dist.get_rank() == 0:
-        wandb.finish()
 
 
 if __name__ == "__main__":
