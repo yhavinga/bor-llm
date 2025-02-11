@@ -1,11 +1,11 @@
 import os
+
 import torch
 import torch.distributed as dist
-from dotenv import load_dotenv
 from datasets import load_from_disk
-from trl import SFTTrainer, SFTConfig
-from transformers import AutoTokenizer, AutoModelForCausalLM
-
+from dotenv import load_dotenv
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import SFTConfig, SFTTrainer
 
 print(f"CUDA available: {torch.cuda.is_available()}")
 print(f"Total GPUs: {torch.cuda.device_count()}")
@@ -28,7 +28,9 @@ def setup_distributed():
     local_rank = rank % torch.cuda.device_count()
     torch.cuda.set_device(local_rank)
 
-    print(f"Rank {rank} using GPU {local_rank} (total GPUs: {torch.cuda.device_count()}) world size: {world_size}")
+    print(
+        f"Rank {rank} using GPU {local_rank} (total GPUs: {torch.cuda.device_count()}) world size: {world_size}"
+    )
 
 
 def prepare_data():
@@ -47,7 +49,7 @@ def prepare_data():
 
 def main():
     setup_distributed()
-    
+
     # Check if GPU assignment is correct
     print(f"Process {dist.get_rank()} is using GPU {torch.cuda.current_device()}")
 
@@ -84,7 +86,7 @@ def main():
         per_device_eval_batch_size=16,
         gradient_accumulation_steps=1,
         num_train_epochs=1,
-        max_steps=len(ds['train']) // 16 // 4,
+        max_steps=len(ds["train"]) // 16 // 4,
         warmup_steps=20,
         logging_strategy="steps",
         logging_steps=10,
@@ -99,25 +101,25 @@ def main():
         gradient_checkpointing=True,
         report_to="none",
         ddp_find_unused_parameters=False,
-        ddp_backend='nccl',
+        ddp_backend="nccl",
         max_grad_norm=1.0,
         # Remove unused columns to let TRL handle the chat template
-        remove_unused_columns=True
+        remove_unused_columns=True,
     )
 
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=ds['train'],
-        eval_dataset=ds['validation'],
+        train_dataset=ds["train"],
+        eval_dataset=ds["validation"],
         processing_class=tokenizer,
     )
 
     train_result = trainer.train()
 
     metrics = train_result.metrics
-    metrics["train_samples"] = len(ds['train'])
-    metrics["val_samples"] = len(ds['validation'])
+    metrics["train_samples"] = len(ds["train"])
+    metrics["val_samples"] = len(ds["validation"])
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
     trainer.save_state()
