@@ -1,6 +1,6 @@
 import argparse
-from datetime import datetime
 import os
+from datetime import datetime
 
 
 def parse_args():
@@ -166,15 +166,15 @@ def parse_args():
 
 def main(args):
     import torch
+    from accelerate import Accelerator
     from datasets import load_from_disk
+    from tabulate import tabulate
     # from peft import LoraConfig
     from transformers import (AutoModelForCausalLM, AutoTokenizer,
                               PreTrainedTokenizerFast, TrainerControl,
                               TrainerState, TrainingArguments)
     from transformers.trainer_callback import TrainerCallback
     from trl import SFTConfig, SFTTrainer
-    from accelerate import Accelerator
-    from tabulate import tabulate
 
     accelerator = Accelerator()
 
@@ -184,7 +184,11 @@ def main(args):
         print(f"Number of processes: {accelerator.num_processes}")
         print(f"Distributed type: {accelerator.distributed_type}")
         print(f"Mixed precision: {accelerator.mixed_precision}")
-        total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+        total_batch_size = (
+            args.per_device_train_batch_size
+            * accelerator.num_processes
+            * args.gradient_accumulation_steps
+        )
         print(f"Per device batch size: {args.per_device_train_batch_size}")
         print(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
         print(f"Total train batch size: {total_batch_size}\n")
@@ -198,12 +202,19 @@ def main(args):
             if self.use_wandb:
                 import wandb
 
-        def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics=None, **kwargs):
+        def on_evaluate(
+            self,
+            args: TrainingArguments,
+            state: TrainerState,
+            control: TrainerControl,
+            metrics=None,
+            **kwargs,
+        ):
             # Early return if not main process
             if not self.accelerator.is_main_process:
                 return
 
-            model = kwargs.get('model')
+            model = kwargs.get("model")
             if model is None:
                 return
 
@@ -213,16 +224,22 @@ def main(args):
             # Process examples in batch
             examples = self.eval_dataset.select(range(2))
             generations = []
-            
+
             for example in examples:
                 prompt_messages = []
                 expected_response = None
-                
-                for msg in example['messages']:
+
+                for msg in example["messages"]:
                     if msg["role"] == "system":
-                        prompt_messages.append({"role": "system", "content": msg["content"]})
-                    elif msg["role"] == "user" and not any(m["role"] == "user" for m in prompt_messages):
-                        prompt_messages.append({"role": "user", "content": msg["content"]})
+                        prompt_messages.append(
+                            {"role": "system", "content": msg["content"]}
+                        )
+                    elif msg["role"] == "user" and not any(
+                        m["role"] == "user" for m in prompt_messages
+                    ):
+                        prompt_messages.append(
+                            {"role": "user", "content": msg["content"]}
+                        )
                     elif msg["role"] == "assistant" and expected_response is None:
                         expected_response = msg["content"]
                         break
@@ -232,17 +249,12 @@ def main(args):
 
                 # Create input prompt with chat template
                 input_prompt = self.tokenizer.apply_chat_template(
-                    prompt_messages,
-                    tokenize=False,
-                    add_generation_prompt=True
+                    prompt_messages, tokenize=False, add_generation_prompt=True
                 )
 
                 # Tokenize single prompt
                 inputs = self.tokenizer(
-                    input_prompt,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512
+                    input_prompt, return_tensors="pt", truncation=True, max_length=512
                 ).to(model.device)
 
                 # Generate for single prompt
@@ -258,18 +270,22 @@ def main(args):
                     top_k=50,
                 )
 
-                generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                
+                generated_text = self.tokenizer.decode(
+                    outputs[0], skip_special_tokens=True
+                )
+
                 # Find the last occurrence of '<|assistant|>' and take text after it
-                assistant_marker = '<|assistant|>'
+                assistant_marker = "<|assistant|>"
                 last_assistant_idx = generated_text.rfind(assistant_marker)
                 if last_assistant_idx != -1:
-                    generated_text = generated_text[last_assistant_idx + len(assistant_marker):].strip()
-                
+                    generated_text = generated_text[
+                        last_assistant_idx + len(assistant_marker) :
+                    ].strip()
+
                 generation = {
                     "prompt": input_prompt,
                     "expected": expected_response,
-                    "generated": generated_text
+                    "generated": generated_text,
                 }
                 generations.append(generation)
 
@@ -277,27 +293,39 @@ def main(args):
             if self.use_wandb:
                 wandb_table = wandb.Table(columns=["prompt", "expected", "generated"])
                 for gen in generations:
-                    wandb_table.add_data(gen["prompt"], gen["expected"], gen["generated"])
+                    wandb_table.add_data(
+                        gen["prompt"], gen["expected"], gen["generated"]
+                    )
                 wandb.log({"eval_generations": wandb_table}, step=state.global_step)
-            
+
             # Pretty print generations using tabulate
-            table_data = [[i+1, gen["prompt"], gen["expected"], gen["generated"]] 
-                         for i, gen in enumerate(generations)]
+            table_data = [
+                [i + 1, gen["prompt"], gen["expected"], gen["generated"]]
+                for i, gen in enumerate(generations)
+            ]
             print("\nGeneration Examples:")
-            print(tabulate(
-                table_data,
-                headers=["#", "Prompt", "Expected", "Generated"],
-                tablefmt="grid",
-                maxcolwidths=[None, 40, 40, 40],  # Limit column widths for readability
-                showindex=False
-            ))
-            
+            print(
+                tabulate(
+                    table_data,
+                    headers=["#", "Prompt", "Expected", "Generated"],
+                    tablefmt="grid",
+                    maxcolwidths=[
+                        None,
+                        40,
+                        40,
+                        40,
+                    ],  # Limit column widths for readability
+                    showindex=False,
+                )
+            )
+
             if self.use_wandb:
                 print(f"\nLogged {len(generations)} example generations to WandB.")
 
     # Initialize wandb only if specified in report_to
     if "wandb" in args.report_to and accelerator.is_main_process:
         import wandb
+
         wandb.init(project="mistral-bor-1b-finetuning", name="bor-1b-dutch-sft")
 
     # Set environment variable for experimental Flash Attention support on ROCm
@@ -330,7 +358,9 @@ def main(args):
         args.model_name_or_path,
         quantization_config=None,  # to disable bitsandbytes quantization, use accelerate for quantization
         device_map="auto",
-        torch_dtype=torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32),
+        torch_dtype=torch.bfloat16
+        if args.bf16
+        else (torch.float16 if args.fp16 else torch.float32),
         trust_remote_code=True,
         attn_implementation="flash_attention_2",
         sliding_window=args.max_seq_length,
@@ -391,7 +421,9 @@ def main(args):
         dataloader_num_workers=min(112, os.cpu_count() or 1),
         dataloader_pin_memory=False,  # Disable pin memory when using FSDP
         dataloader_drop_last=True,
-        gradient_checkpointing_kwargs=None if args.gradient_checkpointing else {"use_reentrant": False},
+        gradient_checkpointing_kwargs=None
+        if args.gradient_checkpointing
+        else {"use_reentrant": False},
         remove_unused_columns=True,
         dataloader_persistent_workers=True,
         full_determinism=False,  # True enables full reproducibility but reduces performance

@@ -7,11 +7,9 @@ Bor-1B is a 1.19B parameter language model optimized for Dutch and English, buil
 ## Features
 
 - 1.19B parameter model with strong Dutch and English capabilities
-- Built on Mistral architecture with optimized dimensions
 - Custom Dutch-LLaMA tokenizer for efficient bilingual processing
-- Comprehensive training pipeline with multi-platform support
 - Evaluation tools and deployment scripts
-- Supports CUDA, ROCm, JAX, and TPU backends
+- Supports CUDA, ROCm (JAX and TPU scripts are todo)
 
 ## Installation
 
@@ -43,15 +41,28 @@ TESTING=1 ./setup.sh <environment-type>
 
 ### Finetuning
 
-1. Configure your finetuning parameters in `configs/finetune/bor_finetune.yml`
+The project supports two finetuning approaches:
 
-2. Preprocess the dataset:
-```
+1. Using Axolotl (recommended for production):
+```bash
+# Configure parameters in configs/finetune/bor_finetune.yml
 CUDA_VISIBLE_DEVICES="0" axolotl preprocess configs/finetune/bor_finetune.yml
-```
-3. Launch multi-GPU training:
-```
+
+# Launch multi-GPU training
 accelerate launch -m axolotl.cli.train configs/finetune/bor_finetune.yml
+```
+
+2. Using TRL/SFT Trainer (for research/experimentation):
+```bash
+# Prepare datasets
+python src/finetune/prepare_datasets.py
+
+# Launch training with custom parameters
+python src/finetune/finetune_bor_trl.py \
+    --model_name_or_path "yhavinga/Bor-1B" \
+    --dataset_path "dataset/finetune/openhermes_leesplank_*" \
+    --learning_rate 2e-4 \
+    --lora_r 16
 ```
 
 ### Model Evaluation

@@ -1,6 +1,6 @@
 import argparse
-from datetime import datetime
 import os
+from datetime import datetime
 
 
 def parse_args():
@@ -167,15 +167,15 @@ def parse_args():
 def main(args):
     import torch
     import wandb
+    from accelerate import Accelerator
     from datasets import load_from_disk
     from peft import LoraConfig
+    from tabulate import tabulate
     from transformers import (AutoModelForCausalLM, AutoTokenizer,
                               PreTrainedTokenizerFast, TrainerControl,
                               TrainerState, TrainingArguments)
     from transformers.trainer_callback import TrainerCallback
     from trl import SFTConfig, SFTTrainer
-    from accelerate import Accelerator
-    from tabulate import tabulate
 
     accelerator = Accelerator()
 
@@ -185,12 +185,19 @@ def main(args):
             self.tokenizer = tokenizer
             self.accelerator = accelerator
 
-        def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics=None, **kwargs):
+        def on_evaluate(
+            self,
+            args: TrainingArguments,
+            state: TrainerState,
+            control: TrainerControl,
+            metrics=None,
+            **kwargs,
+        ):
             # Early return if not main process
             if not self.accelerator.is_main_process:
                 return
 
-            model = kwargs.get('model')
+            model = kwargs.get("model")
             if model is None:
                 return
 
@@ -200,16 +207,22 @@ def main(args):
             # Process examples in batch
             examples = self.eval_dataset.select(range(2))
             generations = []
-            
+
             for example in examples:
                 prompt_messages = []
                 expected_response = None
-                
-                for msg in example['messages']:
+
+                for msg in example["messages"]:
                     if msg["role"] == "system":
-                        prompt_messages.append({"role": "system", "content": msg["content"]})
-                    elif msg["role"] == "user" and not any(m["role"] == "user" for m in prompt_messages):
-                        prompt_messages.append({"role": "user", "content": msg["content"]})
+                        prompt_messages.append(
+                            {"role": "system", "content": msg["content"]}
+                        )
+                    elif msg["role"] == "user" and not any(
+                        m["role"] == "user" for m in prompt_messages
+                    ):
+                        prompt_messages.append(
+                            {"role": "user", "content": msg["content"]}
+                        )
                     elif msg["role"] == "assistant" and expected_response is None:
                         expected_response = msg["content"]
                         break
@@ -219,17 +232,12 @@ def main(args):
 
                 # Create input prompt with chat template
                 input_prompt = self.tokenizer.apply_chat_template(
-                    prompt_messages,
-                    tokenize=False,
-                    add_generation_prompt=True
+                    prompt_messages, tokenize=False, add_generation_prompt=True
                 )
 
                 # Tokenize single prompt
                 inputs = self.tokenizer(
-                    input_prompt,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512
+                    input_prompt, return_tensors="pt", truncation=True, max_length=512
                 ).to(model.device)
 
                 # Generate for single prompt
@@ -245,18 +253,22 @@ def main(args):
                     top_k=50,
                 )
 
-                generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                
+                generated_text = self.tokenizer.decode(
+                    outputs[0], skip_special_tokens=True
+                )
+
                 # Find the last occurrence of '<|assistant|>' and take text after it
-                assistant_marker = '<|assistant|>'
+                assistant_marker = "<|assistant|>"
                 last_assistant_idx = generated_text.rfind(assistant_marker)
                 if last_assistant_idx != -1:
-                    generated_text = generated_text[last_assistant_idx + len(assistant_marker):].strip()
-                
+                    generated_text = generated_text[
+                        last_assistant_idx + len(assistant_marker) :
+                    ].strip()
+
                 generation = {
                     "prompt": input_prompt,
                     "expected": expected_response,
-                    "generated": generated_text
+                    "generated": generated_text,
                 }
                 generations.append(generation)
 
@@ -265,19 +277,28 @@ def main(args):
             for gen in generations:
                 wandb_table.add_data(gen["prompt"], gen["expected"], gen["generated"])
             wandb.log({"eval_generations": wandb_table}, step=state.global_step)
-            
+
             # Pretty print generations using tabulate
-            table_data = [[i+1, gen["prompt"], gen["expected"], gen["generated"]] 
-                         for i, gen in enumerate(generations)]
+            table_data = [
+                [i + 1, gen["prompt"], gen["expected"], gen["generated"]]
+                for i, gen in enumerate(generations)
+            ]
             print("\nGeneration Examples:")
-            print(tabulate(
-                table_data,
-                headers=["#", "Prompt", "Expected", "Generated"],
-                tablefmt="grid",
-                maxcolwidths=[None, 40, 40, 40],  # Limit column widths for readability
-                showindex=False
-            ))
-            
+            print(
+                tabulate(
+                    table_data,
+                    headers=["#", "Prompt", "Expected", "Generated"],
+                    tablefmt="grid",
+                    maxcolwidths=[
+                        None,
+                        40,
+                        40,
+                        40,
+                    ],  # Limit column widths for readability
+                    showindex=False,
+                )
+            )
+
             print(f"\nLogged {len(generations)} example generations to WandB.")
 
     if accelerator.is_main_process:
@@ -313,7 +334,9 @@ def main(args):
         args.model_name_or_path,
         quantization_config=None,  # to disable bitsandbytes quantization, use accelerate for quantization
         device_map="cuda",
-        torch_dtype=torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32),
+        torch_dtype=torch.bfloat16
+        if args.bf16
+        else (torch.float16 if args.fp16 else torch.float32),
         trust_remote_code=True,
         attn_implementation="flash_attention_2",
     )
@@ -326,8 +349,13 @@ def main(args):
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=[
-            "q_proj", "v_proj", "o_proj", "k_proj",
-            "gate_proj", "up_proj", "down_proj",
+            "q_proj",
+            "v_proj",
+            "o_proj",
+            "k_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
         ],
     )
 
@@ -373,7 +401,9 @@ def main(args):
         dataloader_num_workers=os.cpu_count(),
         dataloader_pin_memory=True,  # Pins memory for faster data transfer to GPU
         dataloader_drop_last=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},  # Memory optimization setting
+        gradient_checkpointing_kwargs={
+            "use_reentrant": False
+        },  # Memory optimization setting
         remove_unused_columns=True,
         dataloader_persistent_workers=True,
         full_determinism=False,  # True enables full reproducibility but reduces performance
@@ -384,7 +414,7 @@ def main(args):
         logging_nan_inf_filter=True,  # Filters out NaN/Inf values in logging
         save_total_limit=2,
         save_strategy="steps",
-        save_only_model=False
+        save_only_model=False,
     )
 
     trainer = SFTTrainer(
