@@ -15,16 +15,16 @@ from torch.distributed.fsdp import (
 
 # Constants
 MAX_SEQUENCE_LENGTH = 4096
-LEARNING_RATE = 5e-5
-BATCH_SIZE = 16
+LEARNING_RATE = 1e-5
+PER_DEVICE_BATCH_SIZE = 16
 NUM_EPOCHS = 3
 WARMUP_STEPS = 100
 LOGGING_STEPS = 10
 EVAL_STEPS = 50
-SAVE_STEPS = 100
+SAVE_STEPS = 1000
 SAVE_TOTAL_LIMIT = 3
-MAX_GRAD_NORM = 1.0
-MAX_STEPS = 4000
+MAX_GRAD_NORM = 2.0
+MAX_STEPS = 1000
 
 load_dotenv()  # For HF_TOKEN
 
@@ -85,9 +85,29 @@ def prepare_data():
     return dataset
 
 
+def find_latest_valid_checkpoint(output_dir):
+    """Find the latest checkpoint that has a valid trainer_state.json file"""
+    if not os.path.exists(output_dir):
+        return None
+
+    checkpoints = [f for f in os.listdir(output_dir) if f.startswith("checkpoint-")]
+    if not checkpoints:
+        return None
+
+    # Sort checkpoints by number and check for trainer_state.json
+    valid_checkpoints = []
+    for checkpoint in sorted(checkpoints, key=lambda x: int(x.split("-")[1])):
+        checkpoint_path = os.path.join(output_dir, checkpoint)
+        if os.path.exists(os.path.join(checkpoint_path, "trainer_state.json")):
+            valid_checkpoints.append(checkpoint_path)
+
+    return valid_checkpoints[-1] if valid_checkpoints else None
+
+
 def main():
     setup_distributed()
     world_size = dist.get_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
     # Initialize wandb only on main process
     if dist.get_rank() == 0:
@@ -96,18 +116,9 @@ def main():
     ds = prepare_data()
     output_dir = "output/bor-1b-finetune"
 
-    if os.path.exists(output_dir):
-        checkpoints = [f for f in os.listdir(output_dir) if f.startswith("checkpoint-")]
-        if checkpoints:
-            latest_checkpoint = os.path.join(
-                output_dir, sorted(checkpoints, key=lambda x: int(x.split("-")[1]))[-1]
-            )
-            if dist.get_rank() == 0:
-                print(f"Resuming from checkpoint: {latest_checkpoint}")
-        else:
-            latest_checkpoint = None
-    else:
-        latest_checkpoint = None
+    latest_checkpoint = find_latest_valid_checkpoint(output_dir)
+    if latest_checkpoint and dist.get_rank() == 0:
+        print(f"Resuming from checkpoint: {latest_checkpoint}")
 
     model_id = "yhavinga/Bor-1b"
     tokenizer = AutoTokenizer.from_pretrained(
@@ -120,6 +131,7 @@ def main():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    # First load model to CPU, then move to correct GPU
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         device_map={"": torch.cuda.current_device()},
@@ -138,7 +150,8 @@ def main():
     fsdp_config = {
         # Specify which layer class to wrap with FSDP
         # Alternative: Use min_num_params instead for automatic wrapping based on parameter count
-        "transformer_layer_cls_to_wrap": ["MistralDecoderLayer"],
+        # "transformer_layer_cls_to_wrap": ["MistralDecoderLayer"],
+        "min_num_params": 1e7,
 
         # Controls when to prefetch next parameters during backward pass
         # "backward_pre": Prefetch before current gradient computation (better memory, default)
@@ -173,12 +186,12 @@ def main():
     training_args = SFTConfig(
         output_dir=output_dir,
         learning_rate=LEARNING_RATE,
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
+        per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
+        per_device_eval_batch_size=PER_DEVICE_BATCH_SIZE,
         gradient_accumulation_steps=1,
         num_train_epochs=NUM_EPOCHS,
         max_steps=min(
-            MAX_STEPS, len(ds["train"]) // BATCH_SIZE // world_size
+            MAX_STEPS, NUM_EPOCHS * len(ds["train"]) // (PER_DEVICE_BATCH_SIZE * world_size)
         ),  # Total steps
         warmup_steps=WARMUP_STEPS,
         logging_strategy="steps",
@@ -188,26 +201,27 @@ def main():
         save_strategy="steps",
         save_steps=SAVE_STEPS,
         save_total_limit=SAVE_TOTAL_LIMIT,
-        
+
         # FSDP Configuration - new style
-        fsdp=["full_shard", "auto_wrap"],  # Enable FSDP with auto wrapping
+        fsdp=["full_shard", "auto_wrap"],  # Zero-3: parameters, gradients and optimizer states
+        # fsdp=["shard_grad_op", "auto_wrap"],  # Zero-2: gradients and optimizer states
         fsdp_config=fsdp_config,  # Use the new config dict
-        
+
         # Precision and Performance
         do_eval=True,
         lr_scheduler_type="cosine",
         fp16=False,  # Don't use FP16 with BF16
-        bf16=True,   # Use BF16 on AMD MI300X
-        
+        bf16=True,  # Use BF16 on AMD MI300X
+
         # configured with fsdp_config
         # gradient_checkpointing=True,  # Enable gradient checkpointing
         # gradient_checkpointing_kwargs={"use_reentrant": False},  # Use non-reentrant for better performance
-        
+
         # Distributed Training
         ddp_find_unused_parameters=False,
         ddp_backend="nccl",
         max_grad_norm=MAX_GRAD_NORM,
-        
+
         # Checkpoint and Saving
         remove_unused_columns=True,
         resume_from_checkpoint=latest_checkpoint,
@@ -216,7 +230,7 @@ def main():
         metric_for_best_model="eval_loss",
         ignore_data_skip=False,
         overwrite_output_dir=False,
-        
+
         # Report to wandb from main process only
         report_to="wandb" if dist.get_rank() == 0 else None,
     )

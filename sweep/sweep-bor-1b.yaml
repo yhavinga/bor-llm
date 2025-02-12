@@ -1,0 +1,34 @@
+method: bayes
+metric:
+  name: eval/loss
+  goal: minimize
+parameters:
+  learning_rate:
+    distribution: log_uniform_values
+    min: 1e-6
+    max: 1e-4
+  batch_size:
+    values: [16, 32, 64]
+  max_gradient_norm:
+    values: [1.0, 2.0]
+  warmup_steps:
+    distribution: int_uniform
+    min: 50
+    max: 200
+  scheduler_type:
+    value: cosine
+  max_steps:
+    value: 1000
+early_terminate:
+  type: hyperband
+  min_iter: 100
+  max_iter: 1000
+  eta: 2
+program: src/finetune/finetune_bor_trl_4gpus.py
+command:
+  - ${env}
+  - torchrun
+  - --nproc_per_node=4
+  - ${program}
+  - ${args}
+
