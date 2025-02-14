@@ -1,3 +1,4 @@
+import datetime
 import os
 
 import torch
@@ -20,8 +21,8 @@ PER_DEVICE_BATCH_SIZE = 16
 NUM_EPOCHS = 3
 WARMUP_STEPS = 100
 LOGGING_STEPS = 10
-EVAL_STEPS = 50
-SAVE_STEPS = 10000
+EVAL_STEPS = 500
+SAVE_STEPS = 100
 SAVE_TOTAL_LIMIT = 3
 MAX_GRAD_NORM = 2.0
 MAX_STEPS = 50000
@@ -32,10 +33,16 @@ load_dotenv()  # For HF_TOKEN
 def setup_distributed():
     """Initialize distributed training with correct GPU assignment"""
     try:
-        # Get environment variables for distributed training
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", 1))
         rank = int(os.environ.get("RANK", 0))
+
+        # Set environment variables for NCCL optimization and debugging
+        os.environ["NCCL_DEBUG"] = "INFO"
+        os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+        os.environ["TORCH_NCCL_BLOCKING_WAIT"] = "1"
+        os.environ["NCCL_TIMEOUT_MS"] = str(30 * 60 * 1000)  # 30 minutes timeout
+
 
         # Set the device before initializing process group
         torch.cuda.set_device(local_rank)
@@ -45,14 +52,15 @@ def setup_distributed():
             backend="nccl",
             init_method="env://",
             world_size=world_size,
-            rank=rank
+            rank=rank,
+            timeout=datetime.timedelta(minutes=30)
         )
 
         if rank == 0:
             print(f"CUDA available: {torch.cuda.is_available()}")
             print(f"Total GPUs: {torch.cuda.device_count()}")
             print(f"World size: {world_size}")
-
+            print(f"NCCL Version: {torch.cuda.nccl.version()}")
         print(
             f"Rank {rank} (Local Rank {local_rank}) using GPU: {torch.cuda.get_device_name(local_rank)}"
         )
@@ -205,15 +213,17 @@ def main():
     # Define FSDP config with hybrid sharding strategy
     fsdp_config = {
         "sharding_strategy": ShardingStrategy.HYBRID_SHARD,  # Shard within node, replicate across nodes
-        
+
         # Optimize communication
-        "backward_prefetch": "backward_post",  # More aggressive prefetch
+        "backward_prefetch": "backward_pre", # This is the default
         "forward_prefetch": True,  # Enable forward prefetch for better overlap
+        # Prevents too many in-flight all-gathers by adding synchronization
+        # Reduces memory spikes at cost of slight performance impact
         "limit_all_gathers": True,
-        
+
         # Wrap larger chunks to reduce communication frequency
         "transformer_layer_cls_to_wrap": ["MistralDecoderLayer"],
-        "min_num_params": int(5e7),  # Larger minimum size for wrapping
+        # "min_num_params": int(5e7),  # Larger minimum size for wrapping
         
         # Memory optimizations
         "activation_checkpointing": True,
@@ -223,14 +233,15 @@ def main():
         # Only rank 0 loads model initially, others get weights via sync
         # Significantly reduces CPU memory usage during loading
         "cpu_ram_efficient_loading": True,
-
-        # Prevents too many in-flight all-gathers by adding synchronization
-        # Reduces memory spikes at cost of slight performance impact
-        "limit_all_gathers": True,
+        
+        # Evaluation specific settings
+        "state_dict_type": StateDictType.SHARDED_STATE_DICT,  # Use sharded checkpointing
+        "sync_module_states": True,  # Ensure parameters are synced
+        "reshard_after_forward": False,  # Keep parameters gathered during eval
     }
 
     total_train_steps = min(
-        MAX_STEPS, NUM_EPOCHS * len(ds["train"]) // (PER_DEVICE_BATCH_SIZE * world_size)
+        max_steps, NUM_EPOCHS * len(ds["train"]) // (PER_DEVICE_BATCH_SIZE * world_size)
     )
 
     training_args = SFTConfig(
@@ -238,9 +249,9 @@ def main():
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=2,
         num_train_epochs=NUM_EPOCHS,
-        max_steps=max_steps,
+        max_steps=total_train_steps,
         warmup_steps=warmup_steps,
         logging_strategy="steps",
         logging_steps=LOGGING_STEPS,
@@ -280,6 +291,11 @@ def main():
         
         # Only report metrics from rank 0
         report_to="wandb" if dist.get_rank() == 0 else None,
+        
+        # Updated distributed training settings
+        ddp_timeout=1800,  # 30 minutes timeout
+        dataloader_pin_memory=False,  # Avoid potential memory issues
+        dataloader_num_workers=4,  # Adjust based on system
     )
 
     trainer = SFTTrainer(
@@ -290,16 +306,15 @@ def main():
         processing_class=tokenizer,
     )
 
-    # Optional: Configure optimizer for BF16
-    # This ensures optimizer states are in BF16 to save memory
-    # Note: This is handled automatically by Trainer when bf16=True
-    """
-    optimizer = trainer.optimizer
-    for group in optimizer.state.values():
-        for state_key, state_value in group.items():
-            if isinstance(state_value, torch.Tensor):
-                state_value.data = state_value.data.to(torch.bfloat16)
-    """
+    # Fix: Store original method and create proper wrapper
+    original_evaluate = trainer._maybe_log_save_evaluate
+    def synced_evaluate(*args, **kwargs):
+        dist.barrier()  # Synchronize before evaluation
+        result = original_evaluate(*args, **kwargs)
+        dist.barrier()  # Synchronize after evaluation
+        return result
+    
+    trainer._maybe_log_save_evaluate = synced_evaluate
 
     train_result = trainer.train(resume_from_checkpoint=latest_checkpoint)
 
