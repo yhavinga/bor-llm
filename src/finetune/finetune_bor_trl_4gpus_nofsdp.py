@@ -1,25 +1,32 @@
 import os
 
+os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+os.environ["ROCBLAS_USE_HIPBLASLT"] = "1"
+os.environ["DISABLE_ADDMM_CUDA_LT"] = "0"
+os.environ["HIP_FORCE_DEV_KERNARG"] = "1"
+os.environ["TORCH_NCCL_HIGH_PRIORITY"] = "0"
+
 import torch
 import torch.distributed as dist
 import wandb
-from datasets import load_from_disk
+from datasets import load_from_disk, load_dataset, DatasetDict
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTConfig, SFTTrainer
+import datetime
 
 # Constants
 MAX_SEQUENCE_LENGTH = 4096
-LEARNING_RATE = 5e-5
+LEARNING_RATE = 1e-4
 BATCH_SIZE = 16
-NUM_EPOCHS = 3
+NUM_EPOCHS = 1
 WARMUP_STEPS = 100
 LOGGING_STEPS = 10
-EVAL_STEPS = 50
-SAVE_STEPS = 100
+EVAL_STEPS = 500
+SAVE_STEPS = 1000
 SAVE_TOTAL_LIMIT = 3
 MAX_GRAD_NORM = 1.0
-MAX_STEPS = 4000
+MAX_STEPS = 50000
 
 load_dotenv()  # For HF_TOKEN
 
@@ -40,7 +47,8 @@ def setup_distributed():
             backend="nccl",
             init_method="env://",
             world_size=world_size,
-            rank=rank
+            rank=rank,
+            timeout=datetime.timedelta(minutes=30)
         )
 
         if rank == 0:
@@ -69,8 +77,25 @@ def setup_distributed():
 
 def prepare_data():
     # dataset_path = "../dataset-bor/openhermes_leesplank_20250205_061457"
-    dataset_path = "./dataset/finetune/openhermes_leesplank_20250209_074026"
-    dataset = load_from_disk(dataset_path)
+    # dataset_path = "./dataset/finetune/openhermes_leesplank_20250218_022850"
+    # dataset = load_from_disk(dataset_path)
+    dataset = load_dataset("yhavinga/Leesplank_NL_wikipedia_simplifications_preprocessed_chatml_format")
+    
+    # Keep only the 'messages' column
+    dataset = dataset.remove_columns([col for col in dataset['train'].column_names if col != 'messages'])
+
+    # Create validation set from original training data
+    original_train = dataset['train']
+    validation_dataset = original_train.select(range(1024))  # First 1024 for validation
+    
+    # Create new training set from remaining data (preserves original order)
+    train_dataset = original_train.select(range(1024, len(original_train)))
+    
+    # Build new DatasetDict
+    dataset = DatasetDict({
+        'train': train_dataset,
+        'validation': validation_dataset
+    })
 
     if dist.get_rank() == 0:
         print(
@@ -89,7 +114,7 @@ def main():
         wandb.init(project="mistral-bor-1b-finetuning", name="bor-1b-dutch-sft-4gpus")
 
     ds = prepare_data()
-    output_dir = "output/bor-1b-finetune"
+    output_dir = "output/bor-1b-finetune2"
 
     if os.path.exists(output_dir):
         checkpoints = [f for f in os.listdir(output_dir) if f.startswith("checkpoint-")]
@@ -115,6 +140,7 @@ def main():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    # First load model to CPU, then move to correct GPU
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         device_map={"": torch.cuda.current_device()},
@@ -125,6 +151,8 @@ def main():
         # sliding_window=2048,
         # max_position_embeddings=2048,
     )
+    # print the device of the model
+    print(f"Model is on device: {model.device}")
 
     training_args = SFTConfig(
         output_dir=output_dir,
@@ -161,6 +189,7 @@ def main():
         metric_for_best_model="eval_loss",
         ignore_data_skip=False,
         overwrite_output_dir=False,
+        packing=True,
     )
 
     trainer = SFTTrainer(
