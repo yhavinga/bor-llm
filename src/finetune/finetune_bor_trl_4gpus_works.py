@@ -34,7 +34,8 @@ def setup_distributed():
 
 
 def prepare_data():
-    dataset_path = "../dataset-bor/openhermes_leesplank_20250205_061457"
+    # dataset_path = "../dataset-bor/openhermes_leesplank_20250205_061457"
+    dataset_path = "./dataset/finetune/openhermes_leesplank_20250209_074026"
     dataset = load_from_disk(dataset_path)
     train_dataset = dataset["train"]
     eval_dataset = dataset["validation"]

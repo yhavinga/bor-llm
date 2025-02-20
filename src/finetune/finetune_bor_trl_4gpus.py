@@ -3,30 +3,28 @@ import os
 import torch
 import torch.distributed as dist
 import wandb
-from datasets import load_from_disk
+from datasets import load_from_disk, load_dataset, DatasetDict
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTConfig, SFTTrainer
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    ShardingStrategy,
-    StateDictType,
-)
+import datetime
 
 # Constants
 MAX_SEQUENCE_LENGTH = 4096
-LEARNING_RATE = 1e-5
-PER_DEVICE_BATCH_SIZE = 16
-NUM_EPOCHS = 3
-WARMUP_STEPS = 100
+LEARNING_RATE = 7e-5
+PER_DEVICE_BATCH_SIZE = 64
+NUM_EPOCHS = 1
+WARMUP_STEPS = 200
 LOGGING_STEPS = 10
-EVAL_STEPS = 50
-SAVE_STEPS = 10000
+EVAL_STEPS = 100
+SAVE_STEPS = 200
 SAVE_TOTAL_LIMIT = 3
-MAX_GRAD_NORM = 2.0
+MAX_GRAD_NORM = 1.0
 MAX_STEPS = 50000
 
 load_dotenv()  # For HF_TOKEN
+
+# os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
 
 
 def setup_distributed():
@@ -45,7 +43,8 @@ def setup_distributed():
             backend="nccl",
             init_method="env://",
             world_size=world_size,
-            rank=rank
+            rank=rank,
+            timeout=datetime.timedelta(minutes=60)
         )
 
         if rank == 0:
@@ -74,8 +73,25 @@ def setup_distributed():
 
 def prepare_data():
     # dataset_path = "../dataset-bor/openhermes_leesplank_20250205_061457"
-    dataset_path = "./dataset/finetune/openhermes_leesplank_20250209_074026"
-    dataset = load_from_disk(dataset_path)
+    # dataset_path = "./dataset/finetune/openhermes_leesplank_20250218_022850"
+    # dataset = load_from_disk(dataset_path)
+    dataset = load_dataset("yhavinga/Leesplank_NL_wikipedia_simplifications_preprocessed_chatml_format")
+
+    # Keep only the 'messages' column
+    dataset = dataset.remove_columns([col for col in dataset['train'].column_names if col != 'messages'])
+
+    # Create validation set from original training data
+    original_train = dataset['train']
+    validation_dataset = original_train.select(range(1024))  # First 1024 for validation
+
+    # Create new training set from remaining data (preserves original order)
+    train_dataset = original_train.select(range(1024, len(original_train)))
+
+    # Build new DatasetDict
+    dataset = DatasetDict({
+        'train': train_dataset,
+        'validation': validation_dataset
+    })
 
     if dist.get_rank() == 0:
         print(
@@ -163,7 +179,7 @@ def main():
     max_steps = int(max_steps.item())
 
     ds = prepare_data()
-    output_dir = "output/bor-1b-finetune"
+    output_dir = "output/bor-1b-finetune-fsdp_1epoch_bs64_neft5_20250219"
 
     # Only load checkpoint if not in sweep
     latest_checkpoint = None if is_sweep else find_latest_valid_checkpoint(output_dir)
@@ -192,6 +208,8 @@ def main():
         # sliding_window=2048,
         # max_position_embeddings=2048,
     )
+    # Model is loaded on device
+    print(f"Model loaded on device: {model.device}")
 
     # Enable gradient checkpointing before FSDP wrapping
     model.gradient_checkpointing_enable()
@@ -233,6 +251,7 @@ def main():
         "limit_all_gathers": True,
     }
 
+    # NB THIS OVERESTIMATES IF PACKING IS TRUE
     total_train_steps = min(
         MAX_STEPS, NUM_EPOCHS * len(ds["train"]) // (PER_DEVICE_BATCH_SIZE * world_size)
     )
@@ -244,7 +263,7 @@ def main():
         per_device_eval_batch_size=batch_size,
         gradient_accumulation_steps=1,
         num_train_epochs=NUM_EPOCHS,
-        max_steps=max_steps,
+        max_steps=-1,   # total_train_steps,
         warmup_steps=warmup_steps,
         logging_strategy="steps",
         logging_steps=LOGGING_STEPS,
@@ -285,6 +304,8 @@ def main():
         
         # Only report metrics from rank 0
         report_to="wandb" if dist.get_rank() == 0 else None,
+        packing=True,
+        neftune_noise_alpha=5
     )
 
     trainer = SFTTrainer(

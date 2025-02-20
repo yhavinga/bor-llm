@@ -168,7 +168,7 @@ def main(args):
     import torch
     import wandb
     from accelerate import Accelerator
-    from datasets import load_from_disk
+    from datasets import load_from_disk, load_dataset
     from peft import LoraConfig
     from tabulate import tabulate
     from transformers import (AutoModelForCausalLM, AutoTokenizer,
@@ -308,7 +308,15 @@ def main(args):
     os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
 
     # Load the preprocessed dataset
-    dataset = load_from_disk(args.dataset_path)
+    try:
+        dataset = load_from_disk(args.dataset_path)
+    except Exception as e:
+        try:
+            dataset = load_dataset(args.dataset_path)
+        except Exception as e:
+            print(f"Error loading dataset: {e}")
+            raise e
+
     train_dataset = dataset["train"]
     eval_dataset = dataset["validation"]
 

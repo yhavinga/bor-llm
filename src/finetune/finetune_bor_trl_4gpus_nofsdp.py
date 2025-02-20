@@ -17,13 +17,13 @@ import datetime
 
 # Constants
 MAX_SEQUENCE_LENGTH = 4096
-LEARNING_RATE = 1e-4
-BATCH_SIZE = 16
+LEARNING_RATE = 7e-5
+BATCH_SIZE = 64
 NUM_EPOCHS = 1
-WARMUP_STEPS = 100
+WARMUP_STEPS = 200
 LOGGING_STEPS = 10
-EVAL_STEPS = 500
-SAVE_STEPS = 1000
+EVAL_STEPS = 100
+SAVE_STEPS = 200
 SAVE_TOTAL_LIMIT = 3
 MAX_GRAD_NORM = 1.0
 MAX_STEPS = 50000
@@ -48,7 +48,7 @@ def setup_distributed():
             init_method="env://",
             world_size=world_size,
             rank=rank,
-            timeout=datetime.timedelta(minutes=30)
+            timeout=datetime.timedelta(minutes=60)
         )
 
         if rank == 0:
@@ -114,7 +114,7 @@ def main():
         wandb.init(project="mistral-bor-1b-finetuning", name="bor-1b-dutch-sft-4gpus")
 
     ds = prepare_data()
-    output_dir = "output/bor-1b-finetune2"
+    output_dir = "output/bor-1b-finetune_nofsdp_1epoch_20250219"
 
     if os.path.exists(output_dir):
         checkpoints = [f for f in os.listdir(output_dir) if f.startswith("checkpoint-")]
@@ -154,6 +154,11 @@ def main():
     # print the device of the model
     print(f"Model is on device: {model.device}")
 
+    # NB THIS OVERESTIMATES IF PACKING IS TRUE!!
+    total_train_steps = min(
+        MAX_STEPS, NUM_EPOCHS * len(ds["train"]) // (BATCH_SIZE * world_size)
+    )
+
     training_args = SFTConfig(
         output_dir=output_dir,
         learning_rate=LEARNING_RATE,
@@ -161,9 +166,7 @@ def main():
         per_device_eval_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=1,
         num_train_epochs=NUM_EPOCHS,
-        max_steps=min(
-            MAX_STEPS, len(ds["train"]) // BATCH_SIZE // world_size
-        ),  # Total steps
+        max_steps=-1,  # total_train_steps
         warmup_steps=WARMUP_STEPS,
         logging_strategy="steps",
         logging_steps=LOGGING_STEPS,
@@ -190,6 +193,7 @@ def main():
         ignore_data_skip=False,
         overwrite_output_dir=False,
         packing=True,
+        neftune_noise_alpha=5,
     )
 
     trainer = SFTTrainer(
