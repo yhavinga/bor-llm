@@ -1,4 +1,4 @@
-from datasets import load_dataset, interleave_datasets
+from datasets import load_dataset, interleave_datasets, DatasetDict
 import random
 
 SIMPLIFICATION_PROMPTS = [
@@ -26,24 +26,34 @@ SIMPLIFICATION_PROMPTS = [
 
 def format_chat_leesplank(examples, seed=42):
     random.seed(seed)
-    formatted_messages = [
-        [
-            {"role": "user", "content": f"{'Vereenvoudig: ' if (random.random() < 0.2 or len(prompt) < 100) else random.choice(SIMPLIFICATION_PROMPTS)} {prompt}"},
+    formatted_messages = []
+    instructions = []
+    
+    for prompt, result in zip(examples["prompt"], examples["result"]):
+        instruction = "Vereenvoudig: " if (random.random() < 0.2 or len(prompt) < 100) else random.choice(SIMPLIFICATION_PROMPTS)
+        formatted_messages.append([
+            {"role": "user", "content": f"{instruction} {prompt}"},
             {"role": "assistant", "content": result},
-        ]
-        for prompt, result in zip(examples["prompt"], examples["result"])
-    ]
-    return {"messages": formatted_messages}
+        ])
+        instructions.append(instruction)
+    
+    return {
+        "messages": formatted_messages,
+        "instruction": instructions
+    }
 
 def main(seed=42, ordered_ratio=0.7):
-    # Load dataset (already sorted by Levenshtein difficulty)
-    dataset = load_dataset(
-        "UWV/Leesplank_NL_wikipedia_simplifications_preprocessed", 
-        split="train"
-    )
-    n = len(dataset)
+    # Load all splits
+    splits = ["train", "val", "test"]
+    datasets = {
+        split: load_dataset(
+            "UWV/Leesplank_NL_wikipedia_simplifications_preprocessed",
+            split=split
+        ) for split in splits
+    }
 
     # Randomly choose which examples go in ordered vs shuffled groups
+    n = len(datasets["train"])
     indices = list(range(n))
     random.seed(seed)
     random.shuffle(indices)
@@ -54,39 +64,48 @@ def main(seed=42, ordered_ratio=0.7):
     shuffled_indices = indices[cutoff:]         # will be randomized
 
     # Create two subsets
-    ds_ordered = dataset.select(ordered_indices)
-    ds_shuffled = dataset.select(shuffled_indices).shuffle(seed=seed)
+    ds_ordered = datasets["train"].select(ordered_indices)
+    ds_shuffled = datasets["train"].select(shuffled_indices).shuffle(seed=seed)
 
     # Interleave with probability-based sampling
-    interleaved_dataset = interleave_datasets(
-        [ds_ordered, ds_shuffled],
-        probabilities=[ordered_ratio, 1 - ordered_ratio],
-        seed=seed,
-        stopping_strategy="all_exhausted"
-    )
+    processed_datasets = {
+        "train": interleave_datasets(
+            [ds_ordered, ds_shuffled],
+            probabilities=[ordered_ratio, 1 - ordered_ratio],
+            seed=seed,
+            stopping_strategy="all_exhausted"
+        ),
+        "val": datasets["val"].shuffle(seed=seed),
+        "test": datasets["test"].shuffle(seed=seed)
+    }
+
+    # Format all splits to chatml
+    formatted_datasets = {
+        split: dataset.map(
+            lambda x: format_chat_leesplank(x, seed),
+            batched=True,
+            batch_size=1000,
+            num_proc=4,
+            remove_columns=None,
+        ) for split, dataset in processed_datasets.items()
+    }
     
-    # Format to chatml
-    formatted_dataset = interleaved_dataset.map(
-        lambda x: format_chat_leesplank(x, seed),
-        batched=True,
-        batch_size=1000,
-        num_proc=4,
-        remove_columns=None,
-    )
-    
-    # Save to Hub
-    formatted_dataset.push_to_hub(
-        "yhavinga/Leesplank_NL_wikipedia_simplifications_preprocessed_chatml_format",
+    # Convert to DatasetDict and push all splits at once
+    dataset_dict = DatasetDict(formatted_datasets)
+    dataset_dict.push_to_hub(
+        "yhavinga/Leesplank_NL_wikipedia_simplifications_preprocessed_chatml_format_2",
         private=True,
         commit_message="Add ChatML formatted Dutch text simplification dataset"
     )
+
+    # Print statistics
+    for split, dataset in dataset_dict.items():
+        print(f"{split} split size: {len(dataset)}")
     
-    print(f"Dataset size: {len(formatted_dataset)}")
-    # Print example
-    print("\nExample conversation:")
-    print(formatted_dataset[0]["messages"])
+    print("\nExample conversation from validation set:")
+    print(dataset_dict["val"][0]["messages"])
     
-    return formatted_dataset
+    return dataset_dict
 
 if __name__ == "__main__":
     main(ordered_ratio=0.7)
