@@ -1,49 +1,31 @@
-from huggingface_hub import HfApi
-from pathlib import Path
-import os
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import argparse
 from dotenv import load_dotenv
+import torch
 
 def upload_checkpoint_to_hub(checkpoint_dir: str, repo_id: str):
     """
-    Upload checkpoint files to Hugging Face Hub.
+    Upload checkpoint files to Hugging Face Hub using push_to_hub.
     
     Args:
         checkpoint_dir: Path to checkpoint directory
-        repo_id: Hugging Face repo ID (e.g. 'username/model-name') 
-        token: Hugging Face API token
+        repo_id: Hugging Face repo ID (e.g. 'username/model-name')
     """
-    api = HfApi()
+    print(f"Loading model from {checkpoint_dir}...")
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint_dir,
+        torch_dtype=torch.bfloat16
+    )
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir)
     
-    # Create repository if it doesn't exist
-    api.create_repo(repo_id=repo_id, exist_ok=False)
+    print(f"Pushing to hub {repo_id}...")
+    model.push_to_hub(
+        repo_id,
+        safe_serialization=True,
+        torch_dtype=torch.bfloat16
+    )
+    tokenizer.push_to_hub(repo_id)
     
-    # Files to upload (excluding optimizer states and RNG states)
-    files_to_upload = [
-        "config.json",
-        "generation_config.json", 
-        "model.safetensors",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "tokenizer.json",
-        "pytorch_model_fsdp.bin"
-    ]
-
-    checkpoint_path = Path(checkpoint_dir)
-    
-    # Upload each file
-    for filename in files_to_upload:
-        file_path = checkpoint_path / filename
-        if file_path.exists():
-            print(f"Uploading {filename}...")
-            api.upload_file(
-                path_or_fileobj=str(file_path),
-                path_in_repo=filename,
-                repo_id=repo_id,
-            )
-        else:
-            print(f"Warning: {filename} not found in checkpoint directory")
-
     print("Upload complete!")
 
 if __name__ == "__main__":

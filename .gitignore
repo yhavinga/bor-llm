@@ -16,3 +16,4 @@ deepspeed_configs/
 outputs/
 dataset/finetune/
 *tar
+*tar.gz
