@@ -1,0 +1,65 @@
+FROM rocm/pytorch:rocm6.3.2_ubuntu24.04_py3.12_pytorch_release_2.4.0
+
+# Set build arguments
+ARG ROCM_VERSION=6.3.2
+ARG PYTORCH_VERSION=2.4.0
+ARG GPU_ARCH
+
+# Environment configuration
+ENV ROCM_PATH=/opt/rocm-${ROCM_VERSION}
+ENV PATH=${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=${ROCM_PATH}/lib:${LD_LIBRARY_PATH}
+ENV PYTORCH_ROCM_ARCH=${GPU_ARCH:-gfx942:gfx1100}
+ENV HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-9.4.2}
+
+# Install system dependencies
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    git cmake gcc-12 g++-12 libnuma-dev libjansson-dev \
+    libncurses6 libnl-3-200 libnl-route-3-200 libpython3.12-dev \
+    hipblaslt-dev rccl-dev libopenmpi-dev openmpi-bin libfabric-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+
+# AWS OFI RCCL plugin setup
+COPY cray.tar /
+# Ensure the MPI include directory is known to the compiler
+ENV CPATH=/usr/lib/x86_64-linux-gnu/openmpi/include:${CPATH}
+RUN cd / && tar -xf cray.tar && \
+    rm cray.tar && \
+    git clone -b cxi https://github.com/rocm/aws-ofi-rccl /opt/aws-ofi-rccl && \
+    cd /opt/aws-ofi-rccl && \
+    ./autogen.sh && \
+    ./configure --with-libfabric=/usr \
+                --with-hip=${ROCM_PATH} \
+                --with-rccl=${ROCM_PATH}/rccl \
+                CPPFLAGS="-I/usr/lib/x86_64-linux-gnu/openmpi/include" && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /opt/aws-ofi-rccl
+
+# Conda environment setup
+RUN conda create -n hf python=3.12 -y && \
+    echo "source /opt/conda/bin/activate pytorch" > /etc/profile.d/conda.sh && \
+    conda clean -ya
+
+# Install training dependencies
+RUN . /opt/conda/bin/activate hf && \
+    pip install \
+    transformers==4.40.0 \
+    datasets \
+    sentencepiece==0.2.0 \
+    accelerate==0.29.0 \
+    bitsandbytes==0.43.0 \
+    ninja==1.11.1.1 \
+    scipy==1.13.0 \
+    evaluate \
+    tokenizers \
+    huggingface-hub \
+    einops \
+    wandb
+
+# Final configuration
+WORKDIR /workspace
+ENTRYPOINT ["/opt/conda/bin/conda", "run", "--no-capture-output", "-n", "hf"]

@@ -1,0 +1,84 @@
+# ------------------------------------------------
+# Dockerfile for ROCm-enabled Axolotl training
+# Based on official ROCm PyTorch image with:
+#   - bitsandbytes (rocm fork)
+#   - flash-attention (AMD fork)
+#   - DeepSpeed (patched)
+#   - Axolotl (patched)
+#   - Targets gfx942 (MI300X). Change if needed.
+# ------------------------------------------------
+
+FROM rocm/pytorch:rocm6.1.2_ubuntu22.04_py3.10_pytorch_release-2.1.2
+
+# Avoid interactive prompts during apt-get installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set GPU architecture target
+ENV GPU_ARCHS="gfx942"
+ENV DS_BUILD_CPU_ADAM="1"
+
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        patch \
+        python3-setuptools \
+        ninja-build && \
+    rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------
+# 1) Clone & build bitsandbytes (Arlo-Phoenix's ROCm fork)
+# ------------------------------------------------
+RUN git clone https://github.com/arlo-phoenix/bitsandbytes-rocm-5.6 /tmp/bitsandbytes-rocm && \
+    cd /tmp/bitsandbytes-rocm && \
+    git checkout rocm && \
+    PATH="/opt/rocm/bin:${PATH}" ROCM_TARGET="${GPU_ARCHS}" make hip && \
+    pip install .
+
+# ------------------------------------------------
+# 2) Clone & build FlashAttention (AMD fork)
+# ------------------------------------------------
+RUN git clone --recursive https://github.com/ROCmSoftwarePlatform/flash-attention.git /tmp/flash-attention && \
+    cd /tmp/flash-attention && \
+    pip install packaging ninja && \
+    GPU_ARCHS="${GPU_ARCHS}" pip install .
+
+# ------------------------------------------------
+# 3) Clone & patch DeepSpeed for ROCm
+# ------------------------------------------------
+RUN git clone https://github.com/microsoft/DeepSpeed /tmp/DeepSpeed && \
+    cd /tmp/DeepSpeed && \
+    git checkout v0.14.0 && \
+    # We do an inline sed-based patch for builder.py
+    sed -i 's@def assert_no_cuda_mismatch(name=""):@def assert_no_cuda_mismatch(name=""):\n    cuda_available = torch.cuda.is_available()\n    if not cuda_available and not torch.version.hip:\n        print(f"Warning: {name} requires CUDA or ROCm support, but neither is available.")\n        return False\n    else:\n        if cuda_available:\n            cuda_major, cuda_minor = installed_cuda_version(name)\n            sys_cuda_version = f"{cuda_major}.{cuda_minor}"\n            torch_cuda_version = torch.version.cuda\n            if torch_cuda_version is not None:\n                torch_cuda_version = ".".join(torch_cuda_version.split(".")[:2])\n                if sys_cuda_version != torch_cuda_version:\n                    if (cuda_major in cuda_minor_mismatch_ok and sys_cuda_version in cuda_minor_mismatch_ok[cuda_major] and torch_cuda_version in cuda_minor_mismatch_ok[cuda_major]):\n                        print(f"Installed CUDA version {sys_cuda_version} does not match the version torch was compiled with {torch.version.cuda}, but accepted due to known minor mismatch.")\n                        return True\n                    elif os.getenv("DS_SKIP_CUDA_CHECK", "0") == "1":\n                        print(f"Skipping CUDA version check!")\n                        return True\n                    raise CUDAMismatchException(\n                        f">- DeepSpeed Op Builder: Installed CUDA version {sys_cuda_version} does not match the version torch was compiled with {torch.version.cuda}, unable to compile.")\n            else:\n                print(f"Warning: {name} requires CUDA support, but torch.version.cuda is None.")\n                return False\n    return True@g' op_builder/builder.py && \
+    pip install -r requirements/requirements.txt && \
+    HIP_PLATFORM="amd" DS_BUILD_CPU_ADAM=1 TORCH_HIP_ARCH_LIST="${GPU_ARCHS}" python setup.py install
+
+# ------------------------------------------------
+# 4) Clone & patch Axolotl (remove xformers dependency)
+# ------------------------------------------------
+RUN git clone https://github.com/OpenAccess-AI-Collective/axolotl.git /tmp/axolotl && \
+    cd /tmp/axolotl && \
+    # Remove xformers in requirements
+    sed -i '/xformers==0.0.22/d' requirements.txt && \
+    # Remove xformers from setup.py build logic
+    sed -i 's@_install_requires.pop(_install_requires.index("xformers==0.0.22"))@pass@g' setup.py && \
+    sed -i 's@_install_requires.append("xformers>=0.0.23")@pass@g' setup.py && \
+    # Patch out calls to xformers SwiGLU in llama_attn_hijack_flash
+    sed -i 's@from xformers.ops import SwiGLU@class SwiGLU:\n    def __init__(self):\n        pass\n\n@g' src/axolotl/monkeypatch/llama_attn_hijack_flash.py && \
+    sed -i 's@get_xformers_operator("swiglu_packedw")()@False@g' src/axolotl/monkeypatch/llama_attn_hijack_flash.py && \
+    pip install -e .
+
+# ------------------------------------------------
+# 5) Show final versions and build info
+# ------------------------------------------------
+RUN echo '#!/bin/bash\n\
+python3 -c "import torch; print(f\"Torch HIP: {torch.version.hip}\")" \n\
+python3 -c "import bitsandbytes as bnb; print(f\"bitsandbytes: {bnb.__version__}\")" \n\
+python3 -c "import deepspeed; print(f\"DeepSpeed: {deepspeed.__version__}\")" \n\
+python3 -c "import flash_attn; print(f\"FlashAttention: {flash_attn.__version__}\")" || echo "FlashAttention load failed"' \
+    > /usr/local/bin/verify_install && \
+    chmod +x /usr/local/bin/verify_install
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

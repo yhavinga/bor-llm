@@ -1,0 +1,25 @@
+# Version control
+.git
+.gitignore
+
+# Virtual environments
+venvtorchrocm/
+**/venv/
+**/__pycache__/
+
+# Build artifacts and large files
+*.tar.gz
+
+# Build and start scripts
+build_*.sh
+start-*.sh
+
+# Editor and system files
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Logs
+*.log

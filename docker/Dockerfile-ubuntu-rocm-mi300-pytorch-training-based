@@ -1,0 +1,78 @@
+FROM rocm/pytorch-training:v25.2
+
+# Set build arguments
+ARG ROCM_VERSION=6.3.0
+ARG GPU_ARCH
+
+# Environment configuration
+ENV ROCM_PATH=/opt/rocm-${ROCM_VERSION}
+ENV PATH=${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=${ROCM_PATH}/lib:${LD_LIBRARY_PATH}
+ENV PYTORCH_ROCM_ARCH=${GPU_ARCH:-gfx942}
+ENV HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-9.4.2}
+
+# Performance optimization environment variables
+ENV ROCBLAS_USE_HIPBLASLT 1
+ENV DISABLE_ADDMM_CUDA_LT 0
+ENV HIP_FORCE_DEV_KERNARG 1
+ENV TORCH_NCCL_HIGH_PRIORITY 0
+ENV GPU_MAX_HW_QUEUES 8
+
+RUN cd /tmp && \
+    git clone -b rocm_enabled_multi_backend --recursive https://github.com/ROCm/bitsandbytes && \
+    cd bitsandbytes/ && \
+    /opt/conda/envs/py_3.10/bin/pip install -r requirements-dev.txt && \
+    cmake -DCOMPUTE_BACKEND=hip -DBNB_ROCM_ARCH="gfx942" -DAMDGPU_TARGETS="gfx942" -S . && \
+    make -j && \
+    /opt/conda/envs/py_3.10/bin/python -m pip wheel --no-deps . --wheel-dir=/tmp/wheels && \
+    /opt/conda/envs/py_3.10/bin/pip install /tmp/wheels/bitsandbytes-*.whl && \
+    rm -rf /tmp/bitsandbytes /tmp/wheels
+
+RUN /opt/conda/envs/py_3.10/bin/pip install \
+    peft \
+    trl \
+    wandb \
+    plotext
+
+# Install system dependencies
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    libjansson-dev \
+    libpython3.10-dev \
+    libopenmpi-dev openmpi-bin libfabric-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY cray.tar /tmp/
+RUN tar -xf /tmp/cray.tar -C / \
+    && rm /tmp/cray.tar
+
+# Set paths if you want to use Cray’s MPI or libfabric
+ENV LIBFABRIC_PATH=/opt/cray
+ENV MPICH_PATH="/opt/cray/pe/mpich/8.1.29/ofi/crayclang/16.0"
+
+# Set environment variables for ROCm (HIP) paths
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+ENV PATH="$MPICH_PATH/bin:$ROCM_PATH/bin:$PATH"
+ENV LD_LIBRARY_PATH="$LIBFABRIC_PATH/lib64:$MPICH_PATH/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH"
+
+# 2. Build and install AWS OFI RCCL plugin
+RUN git clone --depth=1 https://github.com/ROCm/aws-ofi-rccl.git /tmp/aws-ofi-rccl && \
+    cd /tmp/aws-ofi-rccl && \
+    # Generate configure script using autotools
+    ./autogen.sh && \
+    # Configure the build with ROCm, RCCL, and libfabric paths.
+    # Disable tests to avoid MPI dependency inside the container.
+    CXXFLAGS="-D__HIP_PLATFORM_AMD__" \
+    ./configure --prefix=/opt/rocm \
+                --with-hip=/opt/rocm \
+                --with-rccl=/opt/rocm \
+                --with-libfabric=/usr \
+                --disable-tests && \
+                # Compile and install the plugin
+    make -j$(nproc) && make install && \
+    cd / && rm -rf /tmp/aws-ofi-rccl
+
+
+WORKDIR /workspace
