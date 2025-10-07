@@ -1,4 +1,5 @@
 import os
+import random
 
 import torch
 import torch.distributed as dist
@@ -10,10 +11,10 @@ from trl import SFTConfig, SFTTrainer
 import datetime
 
 # Constants
-MAX_SEQUENCE_LENGTH = 2048
-LEARNING_RATE = 1e-5
-PER_DEVICE_BATCH_SIZE = 8
-NUM_EPOCHS = 1
+MAX_SEQUENCE_LENGTH = 4096
+LEARNING_RATE = 7e-5
+PER_DEVICE_BATCH_SIZE = 64
+NUM_EPOCHS = 2
 WARMUP_STEPS = 200
 LOGGING_STEPS = 10
 EVAL_STEPS = 100
@@ -21,9 +22,30 @@ SAVE_STEPS = 200
 SAVE_TOTAL_LIMIT = 3
 MAX_GRAD_NORM = 1.0
 MAX_STEPS = 50000
-OUTPUT_DIR = "output/eurollm-9b-finetune-fsdp_1epoch_bs8_neft5"
-MODEL_ID = "utter-project/EuroLLM-9B"
-ALTERNATIVE_TOKENIZER_MODEL_ID = "utter-project/EuroLLM-9B-Instruct"
+NEFTUNE_NOISE_ALPHA = 5
+
+SIMPLIFICATION_PROMPTS = [
+    "Vereenvoudig deze tekst:",
+    "Kun je deze tekst makkelijker maken?",
+    "Herschrijf dit in eenvoudigere taal:",
+    "Maak deze tekst begrijpelijker:",
+    "Schrijf dit in simpelere woorden:",
+    "Vertaal dit naar makkelijkere taal:",
+    "Maak dit leesbaar voor een breder publiek:",
+    "Herschrijf dit zodat iedereen het kan begrijpen:",
+    "Maak deze tekst toegankelijker:",
+    "Schrijf dit in klare taal:",
+    "Vereenvoudig dit stuk tekst:",
+    "Kun je dit makkelijker uitleggen?",
+    "Maak dit stuk tekst eenvoudiger:",
+    "Herschrijf dit in begrijpelijke taal:",
+    "Zet dit om naar eenvoudige taal:",
+    "Maak dit makkelijker te lezen:",
+    "Schrijf dit in simpele taal:",
+    "Vertaal dit naar begrijpelijke woorden:",
+    "Maak dit tekststuk eenvoudiger:",
+    "Herschrijf dit in alledaagse taal:"
+]
 
 load_dotenv()  # For HF_TOKEN
 
@@ -75,25 +97,39 @@ def setup_distributed():
 
 
 def prepare_data():
-    # dataset_path = "../dataset-bor/openhermes_leesplank_20250205_061457"
-    # dataset_path = "./dataset/finetune/openhermes_leesplank_20250218_022850"
-    # dataset = load_from_disk(dataset_path)
-    dataset = load_dataset("yhavinga/Leesplank_NL_wikipedia_simplifications_preprocessed_chatml_format")
+    # Load all splits directly from the source dataset
+    dataset = load_dataset("UWV/Leesplank_NL_wikipedia_simplifications_preprocessed")
+    
+    def format_chat_leesplank(examples, seed=42):
+        random.seed(seed)
+        formatted_messages = []
+        for prompt, result in zip(examples["prompt"], examples["result"]):
+            instruction = "Vereenvoudig: " if (random.random() < 0.2 or len(prompt) < 100) else random.choice(SIMPLIFICATION_PROMPTS)
+            formatted_messages.append([
+                {"role": "user", "content": f"{instruction} {prompt}"},
+                {"role": "assistant", "content": result},
+            ])
+        return {"messages": formatted_messages}
 
-    # Keep only the 'messages' column
-    dataset = dataset.remove_columns([col for col in dataset['train'].column_names if col != 'messages'])
+    # Format each split to ChatML format
+    formatted_dataset = DatasetDict({
+        split: dataset[split].map(
+            format_chat_leesplank,
+            batched=True,
+            batch_size=1000,
+            num_proc=4,
+            remove_columns=dataset[split].column_names
+        ) for split in dataset.keys()
+    })
 
-    # Create validation set from original training data
-    original_train = dataset['train']
-    validation_dataset = original_train.select(range(1024))  # First 1024 for validation
+    # The other train runs were validated by this part, so we need to do that here as well
+    newdataset = load_dataset("yhavinga/Leesplank_NL_wikipedia_simplifications_preprocessed_chatml_format", split="train[:1024]")
+    newdataset = newdataset.remove_columns([col for col in newdataset.column_names if col != 'messages'])
 
-    # Create new training set from remaining data (preserves original order)
-    train_dataset = original_train.select(range(1024, len(original_train)))
-
-    # Build new DatasetDict
+    # Use test split as validation for training
     dataset = DatasetDict({
-        'train': train_dataset,
-        'validation': validation_dataset
+        'train': formatted_dataset['train'],
+        'validation': newdataset
     })
 
     if dist.get_rank() == 0:
@@ -132,7 +168,7 @@ def main():
     # Initialize wandb only on rank 0
     is_sweep = os.environ.get("WANDB_SWEEP_ID") is not None
     if rank == 0:
-        wandb.init(project="eurollm-finetuning-leesplank")
+        wandb.init(project="mistral-bor-1b-finetuning")
         if is_sweep:
             config = wandb.config
             learning_rate = config.learning_rate
@@ -182,20 +218,19 @@ def main():
     max_steps = int(max_steps.item())
 
     ds = prepare_data()
+    output_dir = "output/bor-1b-finetune-fsdp_2epoch_bs64_neft5_levenstein_20250221"
 
     # Only load checkpoint if not in sweep
-    latest_checkpoint = None if is_sweep else find_latest_valid_checkpoint(OUTPUT_DIR)
+    latest_checkpoint = None if is_sweep else find_latest_valid_checkpoint(output_dir)
     if latest_checkpoint and dist.get_rank() == 0:
         print(f"Resuming from checkpoint: {latest_checkpoint}")
 
-    # Use alternative tokenizer if specified, otherwise use base model's tokenizer
-    tokenizer_model_id = ALTERNATIVE_TOKENIZER_MODEL_ID or MODEL_ID
+    model_id = "yhavinga/Bor-1b"
     tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_model_id,
+        model_id,
         model_max_length=MAX_SEQUENCE_LENGTH,
-        padding_side="left",  # EuroLLM uses left padding like Llama
+        padding_side="left",  # left padding for Mistral like tokenizer
         add_eos_token=True,
-        trust_remote_code=True,
     )
 
     if tokenizer.pad_token_id is None:
@@ -203,12 +238,14 @@ def main():
 
     # First load model to CPU, then move to correct GPU
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
+        model_id,
         device_map={"": torch.cuda.current_device()},
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
         attn_implementation="flash_attention_2",
-        use_cache=False
+        use_cache=False,
+        # sliding_window=2048,
+        # max_position_embeddings=2048,
     )
     # Model is loaded on device
     print(f"Model loaded on device: {model.device}")
@@ -220,7 +257,7 @@ def main():
     fsdp_config = {
         # Specify which layer class to wrap with FSDP
         # Alternative: Use min_num_params instead for automatic wrapping based on parameter count
-        "transformer_layer_cls_to_wrap": ["LlamaDecoderLayer"],
+        "transformer_layer_cls_to_wrap": ["MistralDecoderLayer"],
         # "min_num_params": int(1e7),
 
         # Controls when to prefetch next parameters during backward pass
@@ -259,7 +296,7 @@ def main():
     )
 
     training_args = SFTConfig(
-        output_dir=OUTPUT_DIR,
+        output_dir=output_dir,
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
@@ -307,7 +344,7 @@ def main():
         # Only report metrics from rank 0
         report_to="wandb" if dist.get_rank() == 0 else None,
         packing=True,
-        neftune_noise_alpha=5
+        neftune_noise_alpha=NEFTUNE_NOISE_ALPHA
     )
 
     trainer = SFTTrainer(
@@ -317,6 +354,17 @@ def main():
         eval_dataset=ds["validation"],
         processing_class=tokenizer,
     )
+
+    # Optional: Configure optimizer for BF16
+    # This ensures optimizer states are in BF16 to save memory
+    # Note: This is handled automatically by Trainer when bf16=True
+    """
+    optimizer = trainer.optimizer
+    for group in optimizer.state.values():
+        for state_key, state_value in group.items():
+            if isinstance(state_value, torch.Tensor):
+                state_value.data = state_value.data.to(torch.bfloat16)
+    """
 
     train_result = trainer.train(resume_from_checkpoint=latest_checkpoint)
 
@@ -332,8 +380,8 @@ def main():
         # Ensure we save the full (unsharded) model
         if trainer.is_fsdp_enabled:
             trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
-        trainer.save_model(OUTPUT_DIR)
-        tokenizer.save_pretrained(OUTPUT_DIR)
+        trainer.save_model(output_dir)
+        tokenizer.save_pretrained(output_dir)
 
 
 if __name__ == "__main__":

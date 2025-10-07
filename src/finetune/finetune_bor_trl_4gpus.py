@@ -13,7 +13,7 @@ import datetime
 MAX_SEQUENCE_LENGTH = 4096
 LEARNING_RATE = 7e-5
 PER_DEVICE_BATCH_SIZE = 64
-NUM_EPOCHS = 1
+NUM_EPOCHS = 2
 WARMUP_STEPS = 200
 LOGGING_STEPS = 10
 EVAL_STEPS = 100
@@ -179,7 +179,7 @@ def main():
     max_steps = int(max_steps.item())
 
     ds = prepare_data()
-    output_dir = "output/bor-1b-finetune-fsdp_1epoch_bs64_neft5_20250219"
+    output_dir = "output/bor-1b-finetune-fsdp_2epoch_bs64_20250221"
 
     # Only load checkpoint if not in sweep
     latest_checkpoint = None if is_sweep else find_latest_valid_checkpoint(output_dir)
@@ -204,7 +204,7 @@ def main():
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
         attn_implementation="flash_attention_2",
-        use_cache=False
+        use_cache=False,
         # sliding_window=2048,
         # max_position_embeddings=2048,
     )
@@ -305,7 +305,7 @@ def main():
         # Only report metrics from rank 0
         report_to="wandb" if dist.get_rank() == 0 else None,
         packing=True,
-        neftune_noise_alpha=5
+        neftune_noise_alpha=0
     )
 
     trainer = SFTTrainer(

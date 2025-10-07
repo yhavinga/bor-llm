@@ -10,10 +10,10 @@ from trl import SFTConfig, SFTTrainer
 import datetime
 
 # Constants
-MAX_SEQUENCE_LENGTH = 2048
-LEARNING_RATE = 1e-5
-PER_DEVICE_BATCH_SIZE = 8
-NUM_EPOCHS = 1
+MAX_SEQUENCE_LENGTH = 4096
+LEARNING_RATE = 7e-5
+PER_DEVICE_BATCH_SIZE = 32
+NUM_EPOCHS = 2
 WARMUP_STEPS = 200
 LOGGING_STEPS = 10
 EVAL_STEPS = 100
@@ -21,9 +21,9 @@ SAVE_STEPS = 200
 SAVE_TOTAL_LIMIT = 3
 MAX_GRAD_NORM = 1.0
 MAX_STEPS = 50000
-OUTPUT_DIR = "output/eurollm-9b-finetune-fsdp_1epoch_bs8_neft5"
-MODEL_ID = "utter-project/EuroLLM-9B"
-ALTERNATIVE_TOKENIZER_MODEL_ID = "utter-project/EuroLLM-9B-Instruct"
+OUTPUT_DIR = "output/llama3.2-1b-finetune-fsdp_2epoch_bs64_noneft"
+MODEL_ID = "meta-llama/Llama-3.2-1B"
+ALTERNATIVE_TOKENIZER_MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
 
 load_dotenv()  # For HF_TOKEN
 
@@ -132,7 +132,7 @@ def main():
     # Initialize wandb only on rank 0
     is_sweep = os.environ.get("WANDB_SWEEP_ID") is not None
     if rank == 0:
-        wandb.init(project="eurollm-finetuning-leesplank")
+        wandb.init(project="mistral-bor-1b-finetuning")
         if is_sweep:
             config = wandb.config
             learning_rate = config.learning_rate
@@ -193,7 +193,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_model_id,
         model_max_length=MAX_SEQUENCE_LENGTH,
-        padding_side="left",  # EuroLLM uses left padding like Llama
+        padding_side="left",  # Llama, Mistral and EuroLLM use left padding
         add_eos_token=True,
         trust_remote_code=True,
     )
@@ -263,7 +263,7 @@ def main():
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=2,
         num_train_epochs=NUM_EPOCHS,
         max_steps=-1,   # total_train_steps,
         warmup_steps=warmup_steps,
@@ -307,7 +307,7 @@ def main():
         # Only report metrics from rank 0
         report_to="wandb" if dist.get_rank() == 0 else None,
         packing=True,
-        neftune_noise_alpha=5
+        neftune_noise_alpha=0
     )
 
     trainer = SFTTrainer(
